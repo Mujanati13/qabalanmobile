@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "221349974331",
+    "project_id": "fecs-d4d80",
+    "storage_bucket": "fecs-d4d80.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:221349974331:android:715fad7616f1dc5eb8271e",
+        "android_client_info": {
+          "package_name": "com.mobileapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDRH-sLb4mh5Gpdd1LmerVlQDDqdX27_e0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
