@@ -8,6 +8,8 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   isGuest: boolean;
+  pendingProfileCompletion: boolean;
+  setPendingProfileCompletion: (value: boolean) => void;
   login: (credentials: LoginCredentials) => Promise<{ success: boolean; message: string }>;
   register: (data: RegisterData) => Promise<{ success: boolean; message: string; requiresVerification?: boolean }>;
   logout: () => Promise<void>;
@@ -26,6 +28,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGuest, setIsGuest] = useState(false);
+  const [pendingProfileCompletion, setPendingProfileCompletion] = useState(false);
 
   useEffect(() => {
     initializeAuth();
@@ -166,6 +169,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isLoading,
     isAuthenticated: !!user && ApiService.isAuthenticated(),
     isGuest,
+    pendingProfileCompletion,
+    setPendingProfileCompletion,
     login,
     register,
     logout,

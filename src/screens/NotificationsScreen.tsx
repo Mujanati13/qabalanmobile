@@ -36,9 +36,9 @@ interface NotificationsScreenProps {
 
 const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ navigation }) => {
   const { t } = useTranslation();
-  const { user: _user } = useAuth();
+  const { user: _user, isGuest, logout } = useAuth();
   const { currentLanguage } = useLanguage();
-  const isRTL = false; // Override to force LTR
+  const isRTL = currentLanguage === 'ar' || I18nManager.isRTL;
   const { unreadCount, decrementUnreadCount, clearAllUnread, refreshUnreadCount } = useNotification();
   const [rawNotifications, setRawNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,6 +75,15 @@ const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ navigation })
   );
 
   const loadNotifications = async (pageNum = 1, showLoading = true) => {
+    // Check if user is authenticated
+    if (isGuest || !_user) {
+      console.log('[NOTIF] Skipping notification load - user not authenticated');
+      setLoading(false);
+      setRefreshing(false);
+      setRawNotifications([]);
+      return;
+    }
+
     try {
       if (showLoading) setLoading(true);
       
@@ -347,7 +356,7 @@ const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ navigation })
         
         {/* Main content */}
         <View style={[styles.notificationContainer, isRTL && styles.rtlNotificationContainer]}>
-          <View style={[styles.titleRow, isRTL && styles.rtlRowReverse]}>
+          <View style={styles.titleRow}>
             <Text style={[
               styles.notificationTitle,
               !item.is_read && styles.unreadTitle,
@@ -402,6 +411,30 @@ const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ navigation })
 
   // Simple empty state without animation
   const EmptyStateComponent: React.FC = () => {
+    if (isGuest || !_user) {
+      return (
+        <View style={styles.emptyState}>
+          <Icon name="notifications-off-outline" size={80} color="#D1D5DB" />
+          <Text style={[styles.emptyStateTitle, isRTL && styles.rtlText]}>
+            {t('auth.loginRequired')}
+          </Text>
+          <Text style={[styles.emptyStateSubtitle, isRTL && styles.rtlText]}>
+            {t('notifications.loginToView')}
+          </Text>
+          <TouchableOpacity
+            style={styles.loginButton}
+            onPress={async () => {
+              // Logout guest user first to reset navigation to AuthNavigator
+              await logout();
+              // AuthWelcome will be shown automatically when isGuest becomes false
+            }}
+          >
+            <Text style={styles.loginButtonText}>{t('auth.login')}</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
     return (
       <View style={styles.emptyState}>
         <Icon name="notifications-outline" size={80} color="#D1D5DB" />
@@ -436,11 +469,11 @@ const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ navigation })
           style={styles.backButton}
           onPress={() => navigation.goBack()}
         >
-          <Icon name="arrow-back" size={24} color="#111827" />
+          <Icon name={isRTL ? 'arrow-forward' : 'arrow-back'} size={24} color="#111827" />
         </TouchableOpacity>
         
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>{t('notifications.title')}</Text>
+          <Text style={[styles.headerTitle, isRTL && { writingDirection: 'rtl' }]}>{t('notifications.title')}</Text>
           {unreadCount > 0 && (
             <View style={styles.badgeContainer}>
               <Text style={styles.badgeText}>{unreadCount}</Text>
@@ -721,8 +754,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
   },
+  loginButton: {
+    marginTop: 24,
+    backgroundColor: '#3B82F6',
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  loginButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   rtlText: {
-    textAlign: 'right',
+    textAlign: 'left',
     writingDirection: 'rtl',
   },
   footer: {
@@ -730,14 +775,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   rtlNotificationWrapper: {
-    flexDirection: 'row-reverse',
+    // No flexDirection needed - I18nManager handles layout mirroring
   },
   rtlNotificationContainer: {
     marginLeft: 0,
     marginRight: 12,
   },
   rtlRowReverse: {
-    flexDirection: 'row-reverse',
+    // No flexDirection needed - I18nManager handles layout mirroring
   },
   rtlTypeChip: {
     marginLeft: 0,
@@ -749,7 +794,7 @@ const styles = StyleSheet.create({
   },
   rtlWritingDirection: {
     writingDirection: 'rtl',
-    textAlign: 'right',
+    textAlign: 'left',
   },
 });
 

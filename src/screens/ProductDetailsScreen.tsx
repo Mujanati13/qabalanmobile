@@ -69,6 +69,9 @@ const ProductDetailsScreen: React.FC<ProductDetailsScreenProps> = ({ navigation,
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('success');
   const [isAddedToCart, setIsAddedToCart] = useState(false);
+  
+  // Variant image display state
+  const [displayedImage, setDisplayedImage] = useState<string | null>(null);
 
   // Reset "Added" state when variant selection changes to allow adding different variants immediately
   useEffect(() => {
@@ -76,6 +79,26 @@ const ProductDetailsScreen: React.FC<ProductDetailsScreenProps> = ({ navigation,
       setIsAddedToCart(false);
     }
   }, [selectedVariants]);
+  
+  // Update displayed image when variant selection changes
+  useEffect(() => {
+    if (!product) return;
+    
+    // Find first selected variant with an image
+    const variantWithImage = selectedVariants.find(v => v.image_url);
+    
+    if (variantWithImage?.image_url) {
+      // Use variant-specific image
+      setDisplayedImage(ApiService.getImageUrl(variantWithImage.image_url));
+    } else {
+      // Fallback to product main image
+      setDisplayedImage(
+        product.main_image 
+          ? ApiService.getImageUrl(product.main_image) 
+          : 'https://via.placeholder.com/400x300?text=No+Image'
+      );
+    }
+  }, [selectedVariants, product]);
   
   // Animation values
   const fadeAnim = new Animated.Value(0);
@@ -219,6 +242,12 @@ const ProductDetailsScreen: React.FC<ProductDetailsScreenProps> = ({ navigation,
       if (response.success && response.data) {
         setProduct(response.data);
         setIsFavorite(response.data.is_favorited);
+        
+        // Initialize displayed image with product main image
+        if (response.data.main_image) {
+          setDisplayedImage(ApiService.getImageUrl(response.data.main_image));
+        }
+        
         // Load variants for this product
         loadProductVariants();
       } else {
@@ -641,7 +670,7 @@ const ProductDetailsScreen: React.FC<ProductDetailsScreenProps> = ({ navigation,
         <View style={styles.imageContainer}>
           <Image
             source={{ 
-              uri: product.main_image ? ApiService.getImageUrl(product.main_image) : 'https://via.placeholder.com/400x300?text=No+Image' 
+              uri: displayedImage || (product.main_image ? ApiService.getImageUrl(product.main_image) : 'https://via.placeholder.com/400x300?text=No+Image')
             }}
             style={styles.productImage}
             resizeMode="cover"

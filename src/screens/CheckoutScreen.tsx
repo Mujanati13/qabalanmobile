@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   Platform,
   PermissionsAndroid,
   I18nManager,
+  Dimensions,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Geolocation from '@react-native-community/geolocation';
@@ -28,10 +29,22 @@ import Colors from '../theme/colors';
 import guestOrderService from '../services/guestOrderService';
 import paymentService, { PaymentSession } from '../services/paymentService';
 import Toast from '../components/common/Toast';
+
+// Use the same base URL as other services (includes /api)
+const API_BASE_URL = 'https://apiv2.qabalanbakery.com/api';
 import EnhancedButton from '../components/common/EnhancedButton';
 import HapticFeedback from '../utils/HapticFeedback';
 import { formatCurrency } from '../utils/currency';
 import { computeVariantPriceFromBase, normalizeVariantPricingMetadata } from '../utils/variantPricing';
+
+// Generate unique session token for Google Places Autocomplete billing optimization
+const generateSessionToken = () => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
 
 interface CheckoutScreenProps {
   navigation: any;
@@ -215,6 +228,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
   const [orderType, setOrderType] = useState<'delivery' | 'pickup'>('delivery');
+  const [deliveryZone, setDeliveryZone] = useState<'inside_amman' | 'outside_amman' | null>(null); // null = auto-detect
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [promoCode, setPromoCode] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<PromoCode | null>(null);
@@ -354,6 +368,74 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     console.warn('[CheckoutScreen] getBranchDisplayName returning empty string for:', raw);
     return '';
   }, [currentLanguage]);
+
+  const getBranchStatus = useCallback((branchId: number): { label: string; color: string; icon: string } => {
+    if (branchAvailabilityLoading) {
+      return {
+        label: t('checkout.branchStatusChecking'),
+        color: '#999',
+        icon: 'time-outline'
+      };
+    }
+
+    const availability = branchAvailability[branchId];
+    
+    if (!availability) {
+      return {
+        label: t('checkout.branchStatusUnknown'),
+        color: '#999',
+        icon: 'help-circle-outline'
+      };
+    }
+
+    switch (availability.status) {
+      case 'available':
+        if (availability.min_remaining !== null && availability.min_remaining !== undefined) {
+          if (availability.min_remaining <= 3) {
+            return {
+              label: t('checkout.branchStatusLastUnits'),
+              color: '#FF9500',
+              icon: 'alert-circle-outline'
+            };
+          } else if (availability.min_remaining <= 10) {
+            return {
+              label: t('checkout.branchStatusLimited'),
+              color: '#FF9500',
+              icon: 'warning-outline'
+            };
+          }
+        }
+        return {
+          label: t('checkout.branchStatusAvailable'),
+          color: '#34C759',
+          icon: 'checkmark-circle'
+        };
+      case 'unavailable':
+        return {
+          label: t('checkout.branchStatusUnavailable'),
+          color: '#FF3B30',
+          icon: 'close-circle'
+        };
+      case 'inactive':
+        return {
+          label: t('checkout.branchStatusInactive'),
+          color: '#999',
+          icon: 'ban-outline'
+        };
+      case 'error':
+        return {
+          label: t('checkout.branchStatusError'),
+          color: '#FF3B30',
+          icon: 'alert-circle-outline'
+        };
+      default:
+        return {
+          label: t('checkout.branchStatusUnknown'),
+          color: '#999',
+          icon: 'help-circle-outline'
+        };
+    }
+  }, [branchAvailability, branchAvailabilityLoading, t]);
   const [guestErrors, setGuestErrors] = useState<{ [key: string]: string }>({});
 
   // Guest GPS functionality
@@ -376,13 +458,16 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   } | null>(null);
   const [mapSearchQuery, setMapSearchQuery] = useState('');
   const [mapSearchResults, setMapSearchResults] = useState<Array<{
-    id: string;
-    name: string;
-    latitude: number;
-    longitude: number;
+    place: string;
+    text: string;
+    structuredFormat?: {
+      mainText: string;
+      secondaryText: string;
+    };
   }>>([]);
   const [isSearchingMap, setIsSearchingMap] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [autocompleteSessionToken, setAutocompleteSessionToken] = useState(generateSessionToken());
 
   const paymentMethods = [
     { id: 'cash', title: t('checkout.paymentMethods.cash'), icon: 'cash-outline' },
@@ -689,8 +774,14 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         return t('checkout.errorCalculating');
       }
 
-      const detail = buildFriendlyStockDetail(rawMessage);
       const sanitized = rawMessage.replace(/^calculate order error:\s*/i, '').trim() || rawMessage;
+
+      // Check for variant errors and translate them
+      if (sanitized.includes('Product variant') || sanitized.includes('product variant')) {
+        return t('checkout.productVariantNotFound');
+      }
+
+      const detail = buildFriendlyStockDetail(rawMessage);
 
       if (detail.message && detail.message !== sanitized) {
         return detail.message;
@@ -897,7 +988,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     setGuestLocation(null);
     setGuestUseAutoLocation(false);
     
-    setToastMessage('GPS location cleared');
+    setToastMessage(t('address.locationCleared'));
     setToastType('info');
     setShowToast(true);
     
@@ -934,41 +1025,123 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     setIsSearchingMap(true);
     
     try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ' Jordan')}&countrycodes=jo&limit=5&accept-language=${isArabic ? 'ar' : 'en'}`
-      );
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+      
+      // Call backend proxy for Google Places Autocomplete (New API)
+      const url = `${API_BASE_URL}/places/autocomplete`;
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          input: query,
+          sessionToken: autocompleteSessionToken,
+          languageCode: isArabic ? 'ar' : 'en',
+        }),
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      // Check if response is ok before parsing JSON
+      if (!response.ok) {
+        console.error(`Places autocomplete failed with status ${response.status}`);
+        setMapSearchResults([]);
+        return;
+      }
+      
       const data = await response.json();
       
-      const results = data.map((item: any) => ({
-        id: item.place_id,
-        name: item.display_name,
-        latitude: parseFloat(item.lat),
-        longitude: parseFloat(item.lon),
-      }));
+      // Ensure suggestions is an array
+      if (!Array.isArray(data.suggestions)) {
+        console.warn('Places API returned invalid data format');
+        setMapSearchResults([]);
+        return;
+      }
+      
+      // Map Google Places API (New) suggestions to our result format
+      const results = data.suggestions
+        .filter((suggestion: any) => suggestion.placePrediction)
+        .map((suggestion: any) => ({
+          place: suggestion.placePrediction.place,
+          text: suggestion.placePrediction.text?.text || '',
+          structuredFormat: suggestion.placePrediction.structuredFormat,
+        }));
       
       setMapSearchResults(results);
-    } catch (error) {
-      console.error('Map search error:', error);
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.warn('Map search request timed out');
+      } else {
+        console.error('Map search error:', error);
+      }
       setMapSearchResults([]);
     } finally {
       setIsSearchingMap(false);
     }
   };
 
-  const selectSearchResult = (result: { id: string; name: string; latitude: number; longitude: number }) => {
-    setMapLocation({
-      latitude: result.latitude,
-      longitude: result.longitude,
-    });
-    setMapRegion({
-      latitude: result.latitude,
-      longitude: result.longitude,
-    });
-    setMapSearchQuery('');
-    setMapSearchResults([]);
+  // Fetch place details from backend proxy to get coordinates
+  const fetchPlaceDetails = async (placeId: string) => {
+    try {
+      const url = new URL(`${API_BASE_URL}/places/details`);
+      url.searchParams.append('place_id', placeId);
+      url.searchParams.append('sessionToken', autocompleteSessionToken);
+      
+      const response = await fetch(url.toString());
+      
+      if (!response.ok) {
+        console.error(`Place Details failed with status ${response.status}`);
+        return null;
+      }
+      
+      const data = await response.json();
+      
+      if (!data.location) {
+        console.error('Place Details API error: No location in response');
+        return null;
+      }
+      
+      return {
+        latitude: data.location.latitude,
+        longitude: data.location.longitude,
+      };
+    } catch (error) {
+      console.error('Error fetching place details:', error);
+      return null;
+    }
+  };
+
+  const selectSearchResult = async (result: { place: string; text: string }) => {
+    // Show loading state
+    setIsSearchingMap(true);
     
-    // Send message to WebView to update map
-    // This will be handled by the WebView's message handler
+    // Fetch place details to get coordinates
+    const location = await fetchPlaceDetails(result.place);
+    
+    setIsSearchingMap(false);
+    
+    if (location) {
+      setMapLocation(location);
+      setMapRegion(location);
+      setMapSearchQuery('');
+      setMapSearchResults([]);
+      
+      // Generate new session token for next search session
+      // (current session concludes after place selection)
+      setAutocompleteSessionToken(generateSessionToken());
+      
+      // Send message to WebView to update map
+      // This will be handled by the WebView's message handler
+    } else {
+      Alert.alert(
+        t('common.error'),
+        t('address.failedToGetLocation') || 'Failed to get location details. Please try again.'
+      );
+    }
   };
 
   const confirmMapLocation = () => {
@@ -992,6 +1165,26 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     calculateOrder();
   };
 
+  // Check for Amman-only delivery restriction violations
+  const ammanOnlyRestrictionWarning = useMemo(() => {
+    if (orderType !== 'delivery' || deliveryZone !== 'outside_amman') {
+      return null;
+    }
+    
+    const ammanOnlyItems = items.filter(item => item.product?.amman_only_delivery === 1);
+    if (ammanOnlyItems.length === 0) {
+      return null;
+    }
+
+    return {
+      count: ammanOnlyItems.length,
+      items: ammanOnlyItems.map(item => {
+        const productName = isArabic ? (item.product?.title_ar || item.product?.title_en) : (item.product?.title_en || item.product?.title_ar);
+        return productName || 'Unknown Product';
+      })
+    };
+  }, [items, orderType, deliveryZone, isArabic]);
+
   // Validation effect to check if order can be placed
   useEffect(() => {
     const validateOrder = () => {
@@ -1003,6 +1196,14 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         progress += 20;
       } else {
         isValid = false;
+      }
+      
+      // Check for Amman-only delivery restrictions
+      if (orderType === 'delivery' && deliveryZone === 'outside_amman') {
+        const ammanOnlyItems = items.filter(item => item.product?.amman_only_delivery === 1);
+        if (ammanOnlyItems.length > 0) {
+          isValid = false;
+        }
       }
       
       // Check address for delivery
@@ -1063,7 +1264,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     };
     
     validateOrder();
-  }, [items, orderType, isGuest, guestInfo, selectedAddress, selectedBranchId, branches, orderCalculation, branchStockWarnings, guestLocation, guestUseAutoLocation]);
+  }, [items, orderType, isGuest, guestInfo, selectedAddress, selectedBranchId, branches, orderCalculation, branchStockWarnings, guestLocation, guestUseAutoLocation, deliveryZone]);
 
   useEffect(() => {
     calculateOrder();
@@ -1099,6 +1300,14 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       calculateOrder();
     }
   }, [branches.length]);
+
+  // Recalculate when delivery zone changes
+  useEffect(() => {
+    if (deliveryZone && orderType === 'delivery') {
+      console.log('🗺️ Delivery zone changed to:', deliveryZone, '- triggering recalculation');
+      calculateOrder();
+    }
+  }, [deliveryZone]);
 
   useEffect(() => {
     if (orderType !== 'pickup') {
@@ -1365,24 +1574,61 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     return Math.round(R * c * 100) / 100;
   };
 
-  // Determine nearest branch based on selected address coords
+  // Determine nearest branch based on selected address coords or guest location
   const pickNearestBranch = useCallback(() => {
     try {
-      if (!selectedAddress || branches.length === 0) return;
-
-      const normalizedSelected = selectedBranchId ?? null;
-      const hasValidSelection = normalizedSelected !== null && branches.some(branch => {
-        const branchIdNumeric = Number(branch?.id);
-        return Number.isFinite(branchIdNumeric) && branchIdNumeric === Number(normalizedSelected);
+      console.log('🔍 pickNearestBranch called - State:', {
+        isGuest,
+        guestLocationExists: !!guestLocation,
+        guestLocation,
+        selectedAddressExists: !!selectedAddress,
+        branchesCount: branches.length,
+        currentBranchId: selectedBranchId,
       });
 
-      if (hasValidSelection) {
+      if (branches.length === 0) {
+        console.log('⏭️ Skipping nearest branch - no branches loaded yet');
         return;
       }
 
-      const { latitude, longitude } = selectedAddress as any;
-      if (!latitude || !longitude) return;
+      // Get coordinates from either logged-in user's address or guest location
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      let hasLocationData = false;
 
+      if (isGuest && guestLocation) {
+        // For guests, use GPS location
+        latitude = guestLocation.latitude;
+        longitude = guestLocation.longitude;
+        hasLocationData = true;
+        console.log('🗺️ Using guest GPS location for nearest branch:', { latitude, longitude });
+      } else if (selectedAddress) {
+        // For logged-in users, use address coordinates
+        const addressLat = (selectedAddress as any)?.latitude ?? (selectedAddress as any)?.lat;
+        const addressLng = (selectedAddress as any)?.longitude ?? (selectedAddress as any)?.lng;
+        latitude = addressLat;
+        longitude = addressLng;
+        hasLocationData = true;
+        console.log('🗺️ Using logged-in user address for nearest branch:', { latitude, longitude });
+      }
+
+      if (!hasLocationData || !latitude || !longitude) {
+        console.log('⚠️ No coordinates available for nearest branch detection');
+        // Only check for valid selection if we don't have location data
+        const normalizedSelected = selectedBranchId ?? null;
+        const hasValidSelection = normalizedSelected !== null && branches.some(branch => {
+          const branchIdNumeric = Number(branch?.id);
+          return Number.isFinite(branchIdNumeric) && branchIdNumeric === Number(normalizedSelected);
+        });
+
+        if (hasValidSelection) {
+          console.log('✓ Keeping current branch selection (no location data):', normalizedSelected);
+        }
+        return;
+      }
+
+      // When we have location data, always find the nearest branch (override defaults)
+      console.log('📍 Searching for nearest branch among', branches.length, 'branches...');
       let bestId: number | null = null;
       let bestDist = Number.POSITIVE_INFINITY;
       for (const branch of branches) {
@@ -1392,23 +1638,53 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         }
 
         const d = distanceKm(latitude, longitude, Number(branch.latitude), Number(branch.longitude));
+        console.log(`  Branch ${branchIdNumeric}: ${d?.toFixed(2)} km`);
         if (d !== null && d < bestDist) {
           bestDist = d;
           bestId = branchIdNumeric;
         }
       }
 
-      if (bestId !== null && bestId !== normalizedSelected) {
-        setSelectedBranchId(bestId);
+      if (bestId !== null) {
+        const normalizedSelected = selectedBranchId ?? null;
+        
+        // Only auto-select if no branch is currently selected
+        // This prevents overriding user's manual selection when they change branch
+        if (normalizedSelected === null) {
+          console.log('✅ Auto-selecting nearest branch:', bestId, 'Distance:', bestDist?.toFixed(2), 'km');
+          
+          // Get branch name for notification
+          const selectedBranch = branches.find(b => b.id === bestId);
+          const branchName = getBranchDisplayName(selectedBranch);
+          
+          setSelectedBranchId(bestId);
+          
+          // Show notification to user
+          setToastMessage(
+            t('checkout.nearestBranchSelected', { 
+              branch: branchName, 
+              distance: bestDist?.toFixed(1) 
+            })
+          );
+          setToastType('info');
+          setShowToast(true);
+        } else if (bestId !== normalizedSelected) {
+          console.log('ℹ️ User has selected branch:', normalizedSelected, '- keeping selection (nearest is:', bestId, ')');
+        } else {
+          console.log('ℹ️ Nearest branch is already selected:', bestId, 'Distance:', bestDist?.toFixed(2), 'km');
+        }
+      } else {
+        console.log('❌ No valid branch found');
       }
     } catch (error) {
-      console.warn('Failed to auto-select nearest branch:', error);
+      console.warn('❌ Failed to auto-select nearest branch:', error);
     }
-  }, [branches, selectedAddress, selectedBranchId, setSelectedBranchId]);
+  }, [branches, selectedAddress, selectedBranchId, setSelectedBranchId, isGuest, guestLocation]);
 
+  // Auto-select nearest branch only when location changes, not when user manually selects
   useEffect(() => {
     pickNearestBranch();
-  }, [pickNearestBranch]);
+  }, [branches, selectedAddress, isGuest, guestLocation]);
 
   useEffect(() => {
     if (showBranchModal) {
@@ -1727,6 +2003,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         order_type: orderType,
         promo_code: promoCandidate?.code,
         is_guest: isGuest,
+        delivery_zone: deliveryZone, // 'inside_amman', 'outside_amman', or null (auto-detect)
       };
 
       // Diagnostics: log whether address has coordinates
@@ -2057,12 +2334,17 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         const apiErrors = Array.isArray(response?.errors) ? response.errors : [];
         const detailedErrorMessage = apiErrors.length > 0 ? (apiErrors[0]?.message || String(apiErrors[0])) : null;
         const errorMessage = detailedErrorMessage || response?.message || t('checkout.errorCalculating');
-        console.error('Calculate order error:', errorMessage);
         const normalizedMessage = errorMessage.toLowerCase();
         const branchErrorPatterns = ['not available at branch', 'insufficient stock', 'out of stock', 'branch inventory'];
         const isBranchStockIssue = branchErrorPatterns.some(pattern => normalizedMessage.includes(pattern));
+        
+        // Check for Amman-only delivery restriction (expected validation, not an error)
+        const isAmmanOnlyRestriction = normalizedMessage.includes('only be delivered inside amman') || 
+                                       normalizedMessage.includes('amman_only_restriction');
 
         if (isBranchStockIssue) {
+          // Use console.warn for expected branch availability issues instead of console.error
+          console.warn('⚠️ Branch stock validation:', errorMessage);
           const friendlyDetail = buildFriendlyStockDetail(errorMessage);
           handleError('calculation', friendlyDetail.message, t('checkout.errorCalculating'));
           setBranchStockWarnings([friendlyDetail.message]);
@@ -2072,7 +2354,19 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
             setOrderCalculation(null);
           }
           // Don't show toast for branch stock issues - they're already shown in the warning banner
+        } else if (isAmmanOnlyRestriction) {
+          // Amman-only restriction is handled by the warning banner above the cart
+          console.warn('⚠️ Amman-only delivery restriction:', errorMessage);
+          setBranchStockWarnings([]);
+          setBranchStockDetails([]);
+          setBranchStockWarningSource(null);
+          if (requestId === calcRequestRef.current) {
+            setOrderCalculation(null);
+          }
+          // Don't show toast - the warning banner is already visible
         } else {
+          // Actual errors that aren't expected validations
+          console.error('❌ Calculate order error:', errorMessage);
           const localizedMessage = localizeCalculationErrorMessage(errorMessage);
           handleError('calculation', localizedMessage, t('checkout.errorCalculating'));
           setBranchStockWarnings([]);
@@ -2319,6 +2613,25 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     try {
       // Clear previous errors
       clearAllErrors();
+
+      // Check if store is accepting orders
+      try {
+        const storeStatusResponse = await ApiService.checkStoreStatus();
+        if (storeStatusResponse.success && storeStatusResponse.data) {
+          if (!storeStatusResponse.data.accepting_orders) {
+            const message = currentLanguage === 'ar' 
+              ? storeStatusResponse.data.message_ar 
+              : storeStatusResponse.data.message_en;
+            
+            handleError('order', message, t('checkout.storeNotAcceptingOrders'));
+            setPlacingOrder(false);
+            return;
+          }
+        }
+      } catch (storeStatusError) {
+        console.error('Failed to check store status:', storeStatusError);
+        // Continue with order if check fails (fail-open for better UX)
+      }
 
       // Enhanced validation checks with detailed error reporting
       if (isGuest && !validateGuestInfo()) {
@@ -2638,7 +2951,11 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
           );
         }, 1000);
       } else {
-        const errorMessage = response?.message || t('checkout.errorPlacingOrder');
+        // Handle bilingual error messages (e.g., store status errors)
+        const errorMessage = currentLanguage === 'ar' && response?.message_ar
+          ? response.message_ar
+          : (response?.message || t('checkout.errorPlacingOrder'));
+        
         handleError('order', errorMessage, t('checkout.errorPlacingOrder'));
         setToastMessage(errorMessage);
         setToastType('error');
@@ -2732,35 +3049,43 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
     return (
       <View style={styles.errorContainer}>
-        {activeErrors.map(([type, message]) => (
-          <View key={type} style={[styles.errorBanner, isRTL && styles.rtlErrorBanner]}>
-            <View style={[styles.errorContent, isRTL && styles.rtlRowReverse]}>
-              <Icon name="warning-outline" size={20} color="#FF4757" />
-              <Text style={[styles.errorText, isRTL && styles.rtlText]}>{message}</Text>
-            </View>
-            <View style={[styles.errorActions, isRTL && styles.rtlRowReverse]}>
-              {canRetry(type as keyof typeof retryCount) && (
+        {activeErrors.map(([type, message]) => {
+          // Translate error messages
+          let translatedMessage = message;
+          if (message.includes('Product variant') || message.includes('product variant')) {
+            translatedMessage = t('checkout.productVariantNotFound');
+          }
+          
+          return (
+            <View key={type} style={[styles.errorBanner, isRTL && styles.rtlErrorBanner]}>
+              <View style={[styles.errorContent, isRTL && styles.rtlRowReverse]}>
+                <Icon 
+                  name="alert-circle" 
+                  size={24} 
+                  color="#FF4757" 
+                  style={{marginTop: 2, flexShrink: 0}}
+                />
+                <View style={{flex: 1}}>
+                  <Text style={[styles.errorText, isRTL && styles.rtlText]}>
+                    {translatedMessage}
+                  </Text>
+                  {/* Show additional context for variant errors */}
+                  {message.includes('Product variant') && (
+                    <Text style={[{color: '#c22032', fontSize: 12, marginTop: 6}, isRTL && styles.rtlText]}>
+                      {t('checkout.productVariantNotFoundDetail')}
+                    </Text>
+                  )}
+                </View>
                 <TouchableOpacity
-                  style={styles.retryButton}
-                  onPress={() => {
-                    clearError(type as keyof typeof errors);
-                    if (type === 'addresses') loadAddresses();
-                    else if (type === 'calculation') calculateOrder();
-                    else if (type === 'promoCode') validatePromoCode();
-                  }}
+                  style={[styles.dismissButton, {padding: 8}]}
+                  onPress={() => clearError(type as keyof typeof errors)}
                 >
-                  <Text style={[styles.retryButtonText, isRTL && styles.rtlText]}>{t('checkout.retry')}</Text>
+                  <Icon name="close" size={18} color="#666" />
                 </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={styles.dismissButton}
-                onPress={() => clearError(type as keyof typeof errors)}
-              >
-                <Icon name="close" size={16} color="#666" />
-              </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        ))}
+          );
+        })}
       </View>
     );
   };
@@ -2773,77 +3098,6 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Branch Selection */}
-        <View style={styles.section}>
-          <View style={[styles.sectionHeader, isRTL && styles.rtlSectionHeader]}>
-            <Text style={[styles.sectionTitle, isRTL && styles.rtlSectionTitle]}>
-              {t('checkout.branch')}
-            </Text>
-            <TouchableOpacity
-              onPress={() => setShowBranchModal(true)}
-              hitSlop={{ top: 10, bottom: 10, left: 12, right: 12 }}
-            >
-              <Text style={[styles.changeButton, isRTL && styles.rtlText]}>
-                {t('checkout.change')}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={[styles.paymentMethodCard, isRTL && styles.rtlRowReverse]}>
-            <Icon name="storefront" size={18} color="#007AFF" />
-            <Text style={[styles.paymentMethodText, isRTL && styles.rtlText]}>
-              {(() => {
-                const b = branches.find(branch => branch.id === selectedBranchId) || branches[0];
-                if (!b) return t('checkout.selectBranch');
-                const title = getBranchDisplayName(b);
-                return title || t('checkout.selectBranch');
-              })()}
-            </Text>
-          </View>
-          {orderType === 'delivery' && (
-            <Text style={[styles.helperText, isRTL && styles.rtlText]}>
-              {t('checkout.deliveryFeeInfo')}
-            </Text>
-          )}
-          {branchStockWarnings.length > 0 && (
-            <View style={[styles.warningBanner, isRTL && styles.rtlRowReverse]}>
-              <Icon name="alert-circle" size={20} color="#B26A00" style={styles.warningIcon} />
-              <View style={[styles.warningTextContainer, isRTL && styles.rtlAlignEnd]}>
-                {(branchStockDetails.length > 0
-                  ? branchStockDetails
-                  : branchStockWarnings.map(message => ({ message }))
-                ).map((warning, idx) => (
-                  <View key={`${warning.message}-${idx}`} style={styles.warningItem}>
-                    {warning.productTitle ? (
-                      <>
-                        <Text style={[styles.warningItemTitle, isRTL && styles.rtlText]}>
-                          • {warning.productTitle}
-                          {warning.variantLabel ? ` (${warning.variantLabel})` : ''}
-                        </Text>
-                        {warning.suggestion && (
-                          <Text style={[styles.warningSuggestion, isRTL && styles.rtlText]}>
-                            {warning.suggestion}
-                          </Text>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <Text style={[styles.warningText, isRTL && styles.rtlText]}>
-                          {warning.message}
-                        </Text>
-                        {warning.suggestion && (
-                          <Text style={[styles.warningSuggestion, isRTL && styles.rtlText]}>
-                            {warning.suggestion}
-                          </Text>
-                        )}
-                      </>
-                    )}
-                  </View>
-                ))}
-              </View>
-            </View>
-          )}
-        </View>
         {/* Order Type Selection */}
         <View style={styles.section}>
           <View style={[styles.sectionHeader, isRTL && styles.rtlSectionHeader]}>
@@ -2892,6 +3146,185 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
               </Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* Delivery Zone Selection (only for delivery orders) */}
+        {orderType === 'delivery' && (
+          <View style={styles.section}>
+            <View style={[styles.sectionHeaderColumn, isRTL && styles.rtlSectionHeaderColumn]}>
+              <View style={[{flexDirection: 'row', alignItems: 'center'}, isRTL && {flexDirection: 'row-reverse'}]}>
+                <Icon name="map-outline" size={20} color="#007AFF" style={{marginRight: isRTL ? 0 : 8, marginLeft: isRTL ? 8 : 0}} />
+                <Text style={[styles.sectionTitle, isArabic && styles.rtlText, {marginBottom: 0}]}>
+                  {t('checkout.deliveryZone')}
+                </Text>
+              </View>
+              <Text style={[styles.sectionHint, isArabic && styles.rtlText]}>
+                {t('checkout.deliveryZoneHint')}
+              </Text>
+            </View>
+            
+            <View style={[styles.deliveryZoneContainer, isRTL && styles.rtlRow]}>
+              <TouchableOpacity
+                style={[
+                  styles.deliveryZoneButton,
+                  isRTL && styles.rtlRowReverse,
+                  (deliveryZone === 'inside_amman' || deliveryZone === null) && styles.selectedDeliveryZone
+                ]}
+                onPress={() => setDeliveryZone('inside_amman')}
+              >
+                <Icon 
+                  name="checkmark-circle" 
+                  size={20} 
+                  color={(deliveryZone === 'inside_amman' || deliveryZone === null) ? '#fff' : '#007AFF'} 
+                />
+                <Text style={[
+                  styles.deliveryZoneText,
+                  (deliveryZone === 'inside_amman' || deliveryZone === null) && styles.selectedDeliveryZoneText,
+                  isRTL && styles.rtlText
+                ]}>
+                  {t('checkout.insideAmman')}
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[
+                  styles.deliveryZoneButton,
+                  isRTL && styles.rtlRowReverse,
+                  deliveryZone === 'outside_amman' && styles.selectedDeliveryZone
+                ]}
+                onPress={() => setDeliveryZone('outside_amman')}
+              >
+                <Icon 
+                  name="location-outline" 
+                  size={20} 
+                  color={deliveryZone === 'outside_amman' ? '#fff' : '#007AFF'} 
+                />
+                <Text style={[
+                  styles.deliveryZoneText,
+                  deliveryZone === 'outside_amman' && styles.selectedDeliveryZoneText,
+                  isRTL && styles.rtlText
+                ]}>
+                  {t('checkout.outsideAmman')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            
+            {deliveryZone === 'outside_amman' && (
+              <View style={styles.deliveryZoneNotice}>
+                <Icon name="information-circle" size={16} color="#007AFF" style={{marginRight: isRTL ? 0 : 6, marginLeft: isRTL ? 6 : 0}} />
+                <Text style={[styles.deliveryZoneNoticeText, isRTL && styles.rtlText]}>
+                  {t('checkout.outsideAmmanNotice')}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Branch Selection */}
+        <View style={styles.section}>
+          <View style={[styles.sectionHeader, isRTL && styles.rtlSectionHeader]}>
+            <View style={[{flexDirection: 'row', alignItems: 'center'}, isRTL && {flexDirection: 'row-reverse'}]}>
+              <Icon name="business" size={20} color="#007AFF" style={{marginRight: isRTL ? 0 : 8, marginLeft: isRTL ? 8 : 0}} />
+              <Text style={[styles.sectionTitle, isArabic && styles.rtlText, {marginBottom: 0}]}>
+                {t('checkout.selectedBranch')}
+              </Text>
+            </View>
+          </View>
+          
+          <TouchableOpacity
+            style={[styles.branchSelectorCard, isRTL && styles.rtlRow]}
+            onPress={() => setShowBranchModal(true)}
+          >
+            <View style={[{flex: 1, flexDirection: 'row', alignItems: 'center'}, isRTL && {flexDirection: 'row-reverse'}]}>
+              <Icon name="location" size={24} color="#007AFF" style={{marginRight: isRTL ? 0 : 12, marginLeft: isRTL ? 12 : 0}} />
+              <View style={[{flex: 1}, isRTL && styles.rtlAlignEnd]}>
+                <Text style={[styles.branchName, isRTL && styles.rtlText]}>
+                  {selectedBranchId 
+                    ? getBranchDisplayName(branches.find(b => b.id === selectedBranchId))
+                    : t('checkout.selectBranch')}
+                </Text>
+                <Text style={[styles.branchHint, isRTL && styles.rtlText]}>
+                  {orderType === 'pickup' 
+                    ? t('checkout.pickupFrom') 
+                    : t('checkout.deliveryFrom')}
+                </Text>
+                {selectedBranchId && orderType === 'delivery' && (() => {
+                  const selectedBranch = branches.find(b => b.id === selectedBranchId);
+                  if (selectedBranch?.distance_km) {
+                    return (
+                      <View style={[styles.branchDistanceContainer, isRTL && {flexDirection: 'row-reverse'}]}>
+                        <Icon name="car-outline" size={14} color="#007AFF" style={{marginRight: isRTL ? 0 : 4, marginLeft: isRTL ? 4 : 0}} />
+                        <Text style={[styles.branchDistance, isRTL && styles.rtlText]}>
+                          {t('checkout.distanceAway', { distance: selectedBranch.distance_km.toFixed(1) })}
+                        </Text>
+                        {selectedBranch.driving_duration && (
+                          <Text style={[styles.branchDuration, isRTL && styles.rtlText]}>
+                            {' • '}{selectedBranch.driving_duration}
+                          </Text>
+                        )}
+                      </View>
+                    );
+                  }
+                  return null;
+                })()}
+              </View>
+            </View>
+            {/* <Icon name="chevron-forward" size={20} color="#999" /> */}
+          </TouchableOpacity>
+
+          {/* Branch availability warnings */}
+          {branchStockWarnings.length > 0 && (
+            <View style={styles.branchWarningContainer}>
+              <View style={[styles.branchWarningHeader, isRTL && styles.rtlRow]}>
+                <Icon name="warning" size={18} color="#ff9500" style={{marginRight: isRTL ? 0 : 8, marginLeft: isRTL ? 8 : 0}} />
+                <Text style={[styles.branchWarningTitle, isRTL && styles.rtlText]}>
+                  {t('checkout.stockWarning')}
+                </Text>
+              </View>
+              {branchStockDetails.map((detail, index) => (
+                <Text key={index} style={[styles.branchWarningText, isRTL && styles.rtlText]}>
+                  • {detail.message}
+                  {detail.suggestion && (
+                    <Text style={styles.branchWarningSuggestion}>
+                      {' '}{detail.suggestion}
+                    </Text>
+                  )}
+                </Text>
+              ))}
+            </View>
+          )}
+
+          {/* Amman-only delivery restriction warning */}
+          {ammanOnlyRestrictionWarning && (
+            <View style={styles.branchWarningContainer}>
+              <View style={[styles.branchWarningHeader, isRTL && styles.rtlRow]}>
+                <Icon name="alert-circle" size={18} color="#ff9500" style={{marginRight: isRTL ? 0 : 8, marginLeft: isRTL ? 8 : 0}} />
+                <Text style={[styles.branchWarningTitle, isRTL && styles.rtlText]}>
+                  {t('checkout.ammanOnlyRestrictionTitle')}
+                </Text>
+              </View>
+              <Text style={[styles.branchWarningText, isRTL && styles.rtlText]}>
+                {t('checkout.ammanOnlyRestrictionMessage')}
+              </Text>
+              <Text style={[styles.branchWarningText, {marginTop: 8, fontWeight: '600'}, isRTL && styles.rtlText]}>
+                {t('checkout.ammanOnlyRestrictionSummary', { 
+                  count: ammanOnlyRestrictionWarning.count,
+                  count_label: ammanOnlyRestrictionWarning.count === 1 ? t('checkout.item') || 'item' : t('checkout.items') || 'items'
+                })}
+              </Text>
+              <Text style={[styles.branchWarningText, {marginTop: 8, fontStyle: 'italic'}, isRTL && styles.rtlText]}>
+                {t('checkout.ammanOnlyRestrictionAction')}
+              </Text>
+              <Text style={[styles.branchWarningText, {marginTop: 12, fontWeight: '600'}, isRTL && styles.rtlText]}>
+                {t('checkout.ammanOnlyItems')}
+              </Text>
+              {ammanOnlyRestrictionWarning.items.map((itemName, index) => (
+                <Text key={index} style={[styles.branchWarningText, isRTL && styles.rtlText, {marginTop: 4}]}>
+                  • {itemName}
+                </Text>
+              ))}
+            </View>
+          )}
         </View>
 
         {/* Cart Items */}
@@ -3097,18 +3530,21 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
                     </Text>
                   </View>
                   
-                  {/* GPS Location Selection - Styled like AddressFormScreen */}
+                  {/* GPS Location Selection - Optimized Display */}
                   {guestUseAutoLocation && guestLocation ? (
                     <View style={styles.guestGpsLocationContainer}>
                       <View style={[styles.guestGpsLocationInfo, isRTL && styles.rtlGuestGpsLocationInfo]}>
-                        <Icon name="location" size={20} color="#28a745" />
+                        <Icon name="location" size={20} color="#28a745" style={{marginRight: isRTL ? 0 : 6, marginLeft: isRTL ? 6 : 0}} />
                         <View style={styles.guestGpsLocationTextContainer}>
                           <Text style={[styles.guestGpsLocationText, isRTL && styles.rtlText]}>
-                            {t('address.usingGPSLocationInfo') || 'Using GPS Location'}
+                            {t('address.usingGPSLocationInfo')}
                           </Text>
-                          <Text style={[styles.guestCoordinatesText, isRTL && styles.rtlText]}>
-                            📍 {guestLocation.latitude.toFixed(6)}, {guestLocation.longitude.toFixed(6)}
-                          </Text>
+                          <View style={[styles.guestCoordinatesRow, isRTL && styles.rtlCoordinatesRow]}>
+                            <Icon name="pin" size={13} color="#999" style={{marginRight: isRTL ? 0 : 4, marginLeft: isRTL ? 4 : 0}} />
+                            <Text style={[styles.guestCoordinatesText, isRTL && styles.rtlText]}>
+                              {guestLocation.latitude.toFixed(6)}, {guestLocation.longitude.toFixed(6)}
+                            </Text>
+                          </View>
                         </View>
                       </View>
                       <View style={[styles.guestLocationButtonsRow, isRTL && styles.rtlRow]}>
@@ -3454,6 +3890,10 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
           <Text style={[styles.requirementsText, isRTL ? styles.rtlText : styles.ltrText]}>
             {(() => {
               if (!items || items.length === 0) return t('checkout.addItemsToCart');
+              // Check for Amman-only restriction FIRST (most specific)
+              if (orderType === 'delivery' && deliveryZone === 'outside_amman' && ammanOnlyRestrictionWarning && ammanOnlyRestrictionWarning.count > 0) {
+                return t('checkout.ammanOnlyRestrictionAction');
+              }
               if (orderType === 'delivery' && isGuest && !guestInfo.address.trim()) return t('checkout.enterDeliveryAddressRequired');
               if (orderType === 'delivery' && isGuest && guestInfo.address.trim() && (!guestLocation || !guestUseAutoLocation)) return t('checkout.useGPSForDeliveryPrice');
               if (orderType === 'delivery' && !isGuest && !selectedAddress) return t('checkout.selectDeliveryAddress');
@@ -3558,148 +3998,6 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         </SafeAreaView>
       </Modal>
 
-      {/* Branch Selection Modal */}
-      <Modal
-        visible={showBranchModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowBranchModal(false)}
-      >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={[styles.modalHeader, isRTL && styles.rtlModalHeader]}>
-            <Text style={[styles.modalTitle, isRTL && styles.rtlModalTitle]}>
-              {t('checkout.selectBranch')}
-            </Text>
-            <TouchableOpacity onPress={() => setShowBranchModal(false)}>
-              <Icon name="close" size={24} color="#333" />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={true}>
-            {(branches || []).filter(branch => branch.is_active === true || branch.is_active === 1).map(branch => {
-              const status = resolveBranchStatus(branch.id);
-              const isSelected = selectedBranchId === branch.id;
-              const isDisabled = ['unavailable', 'inactive', 'error'].includes(status.tone);
-              const issues = Array.isArray(status.issues) ? status.issues.filter(Boolean) : [];
-              const showMessage = Boolean(
-                status.message &&
-                status.message !== status.label &&
-                !issues.includes(status.message)
-              );
-
-              const statusToneStyle = (() => {
-                switch (status.tone) {
-                  case 'available':
-                    return styles.branchStatusAvailable;
-                  case 'limited':
-                    return styles.branchStatusLimited;
-                  case 'warning':
-                    return styles.branchStatusWarning;
-                  case 'inactive':
-                    return styles.branchStatusInactive;
-                  case 'unavailable':
-                  case 'error':
-                    return styles.branchStatusUnavailable;
-                  default:
-                    return styles.branchStatusNeutral;
-                }
-              })();
-
-              const branchTitle = getBranchDisplayName(branch) || `#${branch.id}`;
-              if (!branchTitle || branchTitle.trim().length === 0) {
-                console.warn('[CheckoutScreen] Empty branch title detected', branch);
-              }
-
-              return (
-                <TouchableOpacity
-                  key={branch.id}
-                  style={[
-                    styles.paymentOptionCard,
-                    isSelected && styles.selectedPaymentOption,
-                    isRTL && styles.rtlRowReverse,
-                    isDisabled && styles.disabledBranchOption
-                  ]}
-                  disabled={isDisabled}
-                  onPress={() => handleBranchSelection(branch, status)}
-                >
-                  <Icon name="storefront" size={22} color={isDisabled ? '#9AA0A6' : '#007AFF'} />
-                  <View
-                    style={[
-                      styles.branchTextWrapper,
-                      isRTL && styles.rtlAlignEnd
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.paymentOptionText,
-                        isRTL && styles.rtlText,
-                        isDisabled && styles.disabledBranchText
-                      ]}
-                    >
-                      {branchTitle}
-                    </Text>
-                    <View
-                      style={[
-                        styles.branchStatusRow,
-                        isRTL && styles.rtlRowReverse
-                      ]}
-                    >
-                      {status.tone === 'loading' ? (
-                        <React.Fragment>
-                          <ActivityIndicator size="small" color="#007AFF" style={styles.branchStatusLoader} />
-                          <Text
-                            style={[
-                              styles.branchStatusText,
-                              styles.branchStatusNeutral,
-                              isRTL && styles.rtlText
-                            ]}
-                          >
-                            {status.label}
-                          </Text>
-                        </React.Fragment>
-                      ) : (
-                        <Text
-                          style={[
-                            styles.branchStatusText,
-                            statusToneStyle,
-                            isRTL && styles.rtlText
-                          ]}
-                        >
-                          {status.label}
-                        </Text>
-                      )}
-                    </View>
-                    {showMessage && (
-                      <Text
-                        style={[
-                          styles.branchStatusMessage,
-                          statusToneStyle,
-                          isRTL && styles.rtlText
-                        ]}
-                      >
-                        {status.message}
-                      </Text>
-                    )}
-                    {issues.length > 0 && (
-                      <Text
-                        style={[
-                          styles.branchStatusIssues,
-                          isRTL && styles.rtlText
-                        ]}
-                      >
-                        {issues.join(' • ')}
-                      </Text>
-                    )}
-                  </View>
-                  {isSelected && (
-                    <Icon name="checkmark-circle" size={20} color="#007AFF" />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-
       {/* Guest Map Selection Modal */}
       <Modal
         visible={showGuestMapModal}
@@ -3764,13 +4062,13 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
                 <ScrollView style={styles.mapSearchResultsList} keyboardShouldPersistTaps="handled">
                   {mapSearchResults.map((result) => (
                     <TouchableOpacity
-                      key={result.id}
+                      key={result.place}
                       style={[styles.mapSearchResultItem, isRTL && styles.rtlMapSearchResultItem]}
                       onPress={() => selectSearchResult(result)}
                     >
                       <Icon name="location" size={16} color="#007AFF" />
                       <Text style={[styles.mapSearchResultText, isRTL && styles.rtlMapSearchResultText]} numberOfLines={2}>
-                        {result.name}
+                        {result.text}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -3890,6 +4188,95 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
           />
         </SafeAreaView>
       </Modal>
+
+      {/* Branch Selection Modal */}
+      <Modal
+        visible={showBranchModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowBranchModal(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={[styles.modalHeader, isRTL && styles.rtlModalHeader]}>
+            <TouchableOpacity
+              onPress={() => setShowBranchModal(false)}
+              style={styles.modalCloseButton}
+            >
+              <Icon name="close" size={24} color="#333" />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, isRTL && styles.rtlText]}>
+              {t('checkout.selectBranch')}
+            </Text>
+            <View style={{width: 24}} />
+          </View>
+
+          <ScrollView style={styles.modalContent} contentContainerStyle={{padding: 15}}>
+            <Text style={[styles.branchModalHint, isRTL && styles.rtlText]}>
+              {orderType === 'pickup' 
+                ? t('checkout.selectPickupBranch')
+                : t('checkout.selectDeliveryBranch')}
+            </Text>
+
+            {branches.map((branch) => {
+              const isSelected = selectedBranchId === branch.id;
+              const branchName = getBranchDisplayName(branch);
+              const branchStatus = getBranchStatus(branch.id);
+              
+              return (
+                <TouchableOpacity
+                  key={branch.id}
+                  style={[
+                    styles.paymentOptionCard,
+                    isSelected && styles.selectedPaymentOption,
+                    isRTL && styles.rtlRow
+                  ]}
+                  onPress={() => {
+                    setSelectedBranchId(branch.id);
+                    setShowBranchModal(false);
+                    // Trigger recalculation with new branch
+                    setTimeout(() => calculateOrder(), 300);
+                  }}
+                >
+                  <Icon 
+                    name={isSelected ? "radio-button-on" : "radio-button-off"} 
+                    size={24} 
+                    color={isSelected ? "#007AFF" : "#999"} 
+                  />
+                  <View style={[styles.branchTextWrapper, isRTL && styles.rtlAlignEnd]}>
+                    <View style={[styles.branchNameRow, isRTL && styles.rtlRow]}>
+                      <Text style={[styles.paymentOptionText, isRTL && styles.rtlText]}>
+                        {branchName}
+                      </Text>
+                      <View style={[styles.branchStatusBadge, { backgroundColor: `${branchStatus.color}15`, borderColor: branchStatus.color }]}>
+                        <Icon name={branchStatus.icon} size={12} color={branchStatus.color} style={{marginRight: isRTL ? 0 : 4, marginLeft: isRTL ? 4 : 0}} />
+                        <Text style={[styles.branchStatusText, { color: branchStatus.color }, isRTL && styles.rtlText]}>
+                          {branchStatus.label}
+                        </Text>
+                      </View>
+                    </View>
+                    {branch.distance_km && (
+                      <View style={styles.branchDistanceContainer}>
+                        <Icon name="car-outline" size={14} color="#007AFF" style={{marginRight: isRTL ? 0 : 4, marginLeft: isRTL ? 4 : 0}} />
+                        <Text style={[styles.branchDistance, isRTL && styles.rtlText]}>
+                          {t('checkout.distanceAway', { distance: branch.distance_km.toFixed(1) })}
+                        </Text>
+                        {branch.driving_duration && (
+                          <Text style={[styles.branchDuration, isRTL && styles.rtlText]}>
+                            {' • '}{branch.driving_duration}
+                          </Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                  {isSelected && (
+                    <Icon name="checkmark-circle" size={20} color="#007AFF" />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -3952,8 +4339,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 15,
   },
+  sectionHeaderColumn: {
+    flexDirection: 'column',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+    marginBottom: 15,
+  },
   rtlSectionHeader: {
     flexDirection: 'row-reverse',
+  },
+  rtlSectionHeaderColumn: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+  },
+  sectionHint: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 6,
+    marginLeft: 28,
+    fontStyle: 'italic',
+    lineHeight: 16,
+    maxWidth: '90%',
   },
   sectionTitle: {
     fontSize: 18,
@@ -4073,6 +4479,68 @@ const styles = StyleSheet.create({
   },
   selectedOrderTypeText: {
     color: '#fff',
+  },
+
+  // Delivery Zone Styles - Responsive
+  deliveryZoneContainer: {
+    flexDirection: 'row',
+    gap: Math.min(Dimensions.get('window').width * 0.04, 10),
+    flexWrap: 'wrap' as any,
+    justifyContent: 'space-between',
+  },
+  deliveryZoneButton: {
+    flex: 1,
+    minWidth: Platform.OS === 'web' ? 120 : Math.min(Dimensions.get('window').width * 0.35, 160),
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Platform.select({
+      ios: Dimensions.get('window').width > 375 ? 14 : 11,
+      android: Dimensions.get('window').width > 375 ? 14 : 11,
+      default: 14,
+    }),
+    paddingHorizontal: Platform.select({
+      ios: Dimensions.get('window').width > 375 ? 14 : 10,
+      android: Dimensions.get('window').width > 375 ? 14 : 10,
+      default: 14,
+    }),
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#007AFF',
+    backgroundColor: '#fff',
+    gap: 6,
+  },
+  selectedDeliveryZone: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  deliveryZoneText: {
+    fontSize: Dimensions.get('window').width > 375 ? 14 : 12.5,
+    fontWeight: '500',
+    color: '#007AFF',
+    flexShrink: 1,
+    flex: 1,
+    textAlign: 'center',
+  },
+  selectedDeliveryZoneText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  deliveryZoneNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#E3F2FD',
+    borderRadius: 8,
+    padding: Dimensions.get('window').width > 375 ? 11 : 9,
+    marginTop: 12,
+    gap: 8,
+  },
+  deliveryZoneNoticeText: {
+    flex: 1,
+    fontSize: Dimensions.get('window').width > 375 ? 13 : 11.5,
+    color: '#1976D2',
+    lineHeight: 18,
+    flexWrap: 'wrap',
   },
   
   // Address Styles
@@ -4551,7 +5019,7 @@ const styles = StyleSheet.create({
     marginEnd: 6,
   },
   branchStatusText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   branchStatusAvailable: {
@@ -4646,45 +5114,41 @@ const styles = StyleSheet.create({
   // Error Banner Styles
   errorContainer: {
     backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    paddingVertical: 8,
   },
   errorBanner: {
     backgroundColor: '#ffebee',
-    borderStartWidth: 4,
-    borderStartColor: '#FF4757',
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF4757',
     paddingHorizontal: 15,
     paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     marginHorizontal: 10,
-    marginVertical: 5,
+    marginVertical: 6,
     borderRadius: 8,
   },
   rtlErrorBanner: {
-    flexDirection: 'row-reverse',
+    borderLeftWidth: 0,
+    borderRightWidth: 4,
+    borderRightColor: '#FF4757',
   },
   errorContent: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  errorText: {
+    color: '#c22032',
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+    lineHeight: 18,
   },
   errorActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  retryButton: {
-    backgroundColor: '#FF4757',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  retryButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
+    marginTop: 8,
   },
   dismissButton: {
     padding: 4,
@@ -4758,15 +5222,20 @@ const styles = StyleSheet.create({
   },
   guestGpsLocationInfo: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     backgroundColor: '#e8f5e8',
     paddingHorizontal: 15,
-    paddingVertical: 10,
-    borderRadius: 8,
-    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
+    gap: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#28a745',
   },
   rtlGuestGpsLocationInfo: {
     flexDirection: 'row-reverse',
+    borderLeftWidth: 0,
+    borderRightWidth: 4,
+    borderRightColor: '#28a745',
   },
   guestGpsLocationTextContainer: {
     flex: 1,
@@ -4774,27 +5243,38 @@ const styles = StyleSheet.create({
   guestGpsLocationText: {
     fontSize: 14,
     color: '#28a745',
-    fontWeight: '500',
+    fontWeight: '600',
+    lineHeight: 20,
   },
   guestCoordinatesText: {
     fontSize: 12,
     color: '#666',
-    marginTop: 2,
+    marginTop: 4,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    letterSpacing: 0.3,
+  },
+  guestCoordinatesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  rtlCoordinatesRow: {
+    flexDirection: 'row-reverse',
   },
   guestLocationButtonsRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
+    gap: 10,
+    marginTop: 12,
+    alignItems: 'stretch',
   },
   guestChangeLocationButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f0f8ff',
+    justifyContent: 'center',
+    backgroundColor: '#007AFF',
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
     gap: 6,
   },
   rtlGuestChangeLocationButton: {
@@ -4802,17 +5282,20 @@ const styles = StyleSheet.create({
   },
   guestChangeLocationText: {
     fontSize: 13,
-    color: '#007AFF',
-    fontWeight: '500',
+    color: '#fff',
+    fontWeight: '600',
   },
   guestClearLocationButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#fff5f5',
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
     gap: 6,
+    borderWidth: 1,
+    borderColor: '#ff4757',
   },
   rtlGuestClearLocationButton: {
     flexDirection: 'row-reverse',
@@ -4820,13 +5303,13 @@ const styles = StyleSheet.create({
   guestClearLocationText: {
     fontSize: 13,
     color: '#ff4757',
-    fontWeight: '500',
+    fontWeight: '600',
   },
   
   // Guest location buttons (when no GPS selected)
   guestLocationButtonsContainer: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
     marginBottom: 12,
   },
   guestGpsButton: {
@@ -4835,11 +5318,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#007AFF',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     gap: 6,
   },
   guestGpsButtonText: {
@@ -4853,11 +5336,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#007AFF',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     gap: 6,
   },
   guestMapButtonText: {
@@ -4985,6 +5468,91 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginLeft: 8,
+  },
+  
+  // Branch Selector Styles
+  branchSelectorCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  branchName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  branchHint: {
+    fontSize: 14,
+    color: '#666',
+  },
+  branchDistance: {
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '400',
+  },
+  branchDistanceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  branchNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  branchStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  branchDuration: {
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '400',
+  },
+  branchWarningContainer: {
+    backgroundColor: '#fff9e6',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff9500',
+  },
+  branchWarningHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  branchWarningTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ff9500',
+  },
+  branchWarningText: {
+    fontSize: 13,
+    color: '#8b6914',
+    marginBottom: 4,
+    lineHeight: 18,
+  },
+  branchWarningSuggestion: {
+    fontSize: 13,
+    color: '#007AFF',
+    fontStyle: 'italic',
+  },
+  branchModalHint: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 15,
+    textAlign: 'center',
   },
 });
 

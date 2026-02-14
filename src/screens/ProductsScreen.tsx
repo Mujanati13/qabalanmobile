@@ -20,6 +20,7 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import Colors from '../theme/colors';
 import { Typography, Spacing, BorderRadius, Shadow } from '../theme';
 import { formatCurrency } from '../utils/currency';
+import { CachedImage } from '../components/common';
 
 interface ProductsScreenProps {
   navigation: any;
@@ -239,10 +240,17 @@ const ProductsScreen: React.FC<ProductsScreenProps> = ({ navigation, route }) =>
       onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
     >
       {item.main_image ? (
-        <Image 
-          source={{ uri: ApiService.getImageUrl(item.main_image) }} 
+        <CachedImage 
+          uri={ApiService.getImageUrl(item.main_image)}
           style={styles.productImage}
           resizeMode="cover"
+          showLoadingIndicator={true}
+          loadingIndicatorSize="small"
+          fallbackComponent={
+            <View style={styles.placeholderImage}>
+              <Icon name="image-outline" size={40} color="#ccc" />
+            </View>
+          }
         />
       ) : (
         <View style={styles.placeholderImage}>
@@ -490,10 +498,15 @@ const ProductsScreen: React.FC<ProductsScreenProps> = ({ navigation, route }) =>
                   selectedCategoryId === category.id && styles.categoryCircleSelected
                 ]}>
                   {category.image ? (
-                    <Image
-                      source={{ uri: ApiService.getImageUrl(category.image) }}
+                    <CachedImage
+                      uri={ApiService.getImageUrl(category.image)}
                       style={styles.categoryCircleImage}
                       resizeMode="cover"
+                      showLoadingIndicator={true}
+                      loadingIndicatorSize="small"
+                      fallbackComponent={
+                        <Icon name="grid-outline" size={32} color={selectedCategoryId === category.id ? '#fff' : Colors.primary} />
+                      }
                     />
                   ) : (
                     <Icon name="grid-outline" size={32} color={selectedCategoryId === category.id ? '#fff' : Colors.primary} />

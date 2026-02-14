@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// const API_BASE_URL = 'https://apiv2.qabalanbakery.com/api'; // Production URL
+// const API_BASE_URL = 'http://192.168.72.1:3015/api'; // Production URL
 const API_BASE_URL = 'https://apiv2.qabalanbakery.com/api'; // Local development URL 
 
 interface LoginCredentials {
@@ -25,6 +25,7 @@ interface User {
   user_type: string;
   avatar?: string;
   birth_date?: string;
+  gender?: string;
   is_verified: boolean;
   is_active: boolean;
   email_verified_at?: string;
@@ -134,6 +135,9 @@ interface ProductVariant {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // Variant-specific image
+  image_url?: string | null;
+  image_path?: string | null;
   // Legacy fields for backward compatibility
   variant_name?: string;
   variant_value?: string;
@@ -861,6 +865,8 @@ class ApiService {
     first_name: string;
     last_name: string;
     password: string;
+    birth_date?: string;
+    gender?: string;
   }): Promise<ApiResponse<{ user: User; tokens: Tokens; action: 'login' | 'register' }>> {
     const normalizedPhone = this.normalizePhoneNumber(phone);
     
@@ -887,6 +893,8 @@ class ApiService {
         password: userData.password,
         sms_code,
         language: 'en',
+        birth_date: userData.birth_date,
+        gender: userData.gender,
       });
 
       if (registerResponse.success) {
@@ -932,6 +940,8 @@ class ApiService {
     password: string;
     sms_code: string;
     language?: string;
+    birth_date?: string;
+    gender?: string;
   }): Promise<ApiResponse<{ user: User }>> {
     const normalizedPhone = this.normalizePhoneNumber(data.phone);
     return this.makeRequest<{ user: User }>('/auth/register-with-sms', {
@@ -1945,6 +1955,30 @@ class ApiService {
     });
   }
 
+  async getNearestBranch(latitude: number, longitude: number): Promise<ApiResponse<{
+    nearest_branch: {
+      id: number;
+      title_en: string;
+      title_ar: string;
+      latitude: number;
+      longitude: number;
+      address_en?: string;
+      address_ar?: string;
+      phone?: string;
+      distance_km: number;
+      driving_duration?: string; // Added: Google Maps driving duration (e.g., "15 mins")
+      calculation_method?: string; // Added: 'google_maps_driving' | 'haversine_fallback' | 'haversine_direct'
+    };
+  }>> {
+    return this.makeRequest('/shipping/nearest-branch', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        customer_latitude: latitude, 
+        customer_longitude: longitude 
+      })
+    });
+  }
+
   // =============================================================================
   // NOTIFICATION METHODS
   // =============================================================================
@@ -2009,6 +2043,36 @@ class ApiService {
     }>('/payments/mpgs/verify-payment', {
       method: 'POST',
       body: JSON.stringify({ orderId }),
+    });
+  }
+
+  // Store Schedule Status Check
+  async checkStoreStatus(): Promise<ApiResponse<{ 
+    accepting_orders: boolean;
+    message_en: string;
+    message_ar: string;
+    reason: string;
+    active_schedule?: {
+      id: number;
+      name: string;
+      name_ar?: string;
+      schedule_type: string;
+    };
+  }>> {
+    return this.makeRequest<{ 
+      accepting_orders: boolean;
+      message_en: string;
+      message_ar: string;
+      reason: string;
+      active_schedule?: {
+        id: number;
+        name: string;
+        name_ar?: string;
+        schedule_type: string;
+      };
+    }>('/store-schedules/check', {
+      method: 'GET',
+      requiresAuth: false, // Public endpoint
     });
   }
 }

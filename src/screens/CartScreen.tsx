@@ -21,7 +21,7 @@ import { useTranslation } from 'react-i18next';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useCart } from '../contexts/CartContext';
 import { useAuth } from '../contexts/AuthContext';
-import { ProductVariant } from '../services/apiService';
+import apiService, { ProductVariant } from '../services/apiService';
 import Icon from 'react-native-vector-icons/Ionicons';
 import Colors from '../theme/colors';
 import { Typography, Spacing, BorderRadius, Shadow } from '../theme';
@@ -38,14 +38,31 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   const { t } = useTranslation();
   const { currentLanguage } = useLanguage();
   const isRTL = false; // Override to force LTR
-  const { user, isGuest } = useAuth();
+  const { user, isGuest, logout } = useAuth();
   const { items, itemCount, totalAmount, updateQuantity, removeFromCart, clearCart } = useCart();
   const [loading, setLoading] = useState(false);
   const [animatingItems, setAnimatingItems] = useState<Set<string>>(new Set());
+  const [storeStatus, setStoreStatus] = useState<{ accepting_orders: boolean; message_en: string; message_ar: string } | null>(null);
   const formatAmount = useCallback((value: unknown) => formatCurrency(value, { isRTL }), [isRTL]);
   
   const slideAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Check store status on mount
+  useEffect(() => {
+    const checkStoreStatus = async () => {
+      try {
+        const response = await apiService.checkStoreStatus();
+        if (response.success && response.data) {
+          setStoreStatus(response.data);
+        }
+      } catch (error) {
+        console.error('Failed to check store status:', error);
+      }
+    };
+    
+    checkStoreStatus();
+  }, []);
 
   useEffect(() => {
     Animated.parallel([
@@ -611,7 +628,10 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
           { text: t('common.cancel'), style: 'cancel' },
           { 
             text: t('auth.login'), 
-            onPress: () => navigation.navigate('Auth', { screen: 'Login' })
+            onPress: async () => {
+              // Logout first to show AuthNavigator
+              await logout();
+            }
           }
         ]
       );
@@ -738,10 +758,24 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
               </View>
             </View>
 
+            {/* Store Status Warning */}
+            {storeStatus && !storeStatus.accepting_orders && (
+              <View style={styles.storeClosedBanner}>
+                <Icon name="close-circle" size={20} color="#d32f2f" style={{ marginRight: 8 }} />
+                <Text style={styles.storeClosedText}>
+                  {currentLanguage === 'ar' ? storeStatus.message_ar : storeStatus.message_en}
+                </Text>
+              </View>
+            )}
+
             <TouchableOpacity 
-              style={[styles.checkoutButton, loading && styles.disabledButton, isRTL && styles.rtlCheckoutButton]}
+              style={[
+                styles.checkoutButton, 
+                (loading || items.length === 0 || (storeStatus && !storeStatus.accepting_orders)) && styles.disabledButton, 
+                isRTL && styles.rtlCheckoutButton
+              ]}
               onPress={handleCheckout}
-              disabled={loading || items.length === 0}
+              disabled={loading || items.length === 0 || (storeStatus && !storeStatus.accepting_orders)}
             >
               <View style={[styles.checkoutButtonContent, isRTL && styles.rtlAlignEnd]}>
                 <Text style={[styles.checkoutButtonText, { textAlign: 'left', writingDirection: 'ltr' }]}>
@@ -1177,6 +1211,22 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#007AFF',
+  },
+  storeClosedBanner: {
+    backgroundColor: '#ffebee',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderLeftWidth: 4,
+    borderLeftColor: '#d32f2f',
+  },
+  storeClosedText: {
+    fontSize: 14,
+    color: '#d32f2f',
+    fontWeight: '600',
+    flex: 1,
   },
   checkoutButton: {
     backgroundColor: '#007AFF',

@@ -19,6 +19,7 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import { Colors, Typography, Spacing } from '../theme';
 import apiService, { User } from '../services/apiService';
 import LanguageChangeOverlay from '../components/LanguageChangeOverlay';
+import { OTPInput } from '../components/common';
 
 interface UnifiedPhoneAuthScreenProps {
   navigation: any;
@@ -29,6 +30,8 @@ interface UserData {
   last_name: string;
   password: string;
   confirmPassword: string;
+  birth_date: string;
+  gender: string;
 }
 
 const UnifiedPhoneAuthScreen: React.FC<UnifiedPhoneAuthScreenProps> = ({ navigation }) => {
@@ -43,12 +46,15 @@ const UnifiedPhoneAuthScreen: React.FC<UnifiedPhoneAuthScreenProps> = ({ navigat
     last_name: '',
     password: '',
     confirmPassword: '',
+    birth_date: '',
+    gender: '',
   });
   const [verificationCode, setVerificationCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<any>({});
   const [isNewUser, setIsNewUser] = useState(false);
   const [normalizedPhone, setNormalizedPhone] = useState('');
+  const [otpError, setOtpError] = useState(false);
 
   const completeAuthentication = async (user?: User | null) => {
     if (user) {
@@ -176,6 +182,12 @@ const UnifiedPhoneAuthScreen: React.FC<UnifiedPhoneAuthScreenProps> = ({ navigat
     if (!userData.last_name.trim()) {
       newErrors.last_name = t('auth.lastNameRequired');
     }
+    if (!userData.birth_date) {
+      newErrors.birth_date = t('auth.birthDateRequired');
+    }
+    if (!userData.gender) {
+      newErrors.gender = t('auth.genderRequired');
+    }
     if (!userData.password) {
       newErrors.password = t('auth.enterPassword');
     }
@@ -192,12 +204,33 @@ const UnifiedPhoneAuthScreen: React.FC<UnifiedPhoneAuthScreenProps> = ({ navigat
     setStep('sms');
   };
 
+  const getErrorMessage = (errorMessage: string | undefined): string => {
+    if (!errorMessage) return t('sms.verificationFailed');
+    
+    const lowerError = errorMessage.toLowerCase();
+    
+    if (lowerError.includes('invalid') || lowerError.includes('expired')) {
+      return t('sms.invalidOrExpiredCode');
+    }
+    if (lowerError.includes('already used')) {
+      return t('sms.codeAlreadyUsed');
+    }
+    if (lowerError.includes('too many') || lowerError.includes('too many attempts')) {
+      return t('sms.tooManyAttempts');
+    }
+    
+    // Fallback to default error message
+    return t('sms.verificationFailed');
+  };
+
   const handleVerifyCode = async () => {
-    if (!verificationCode.trim()) {
+    if (!verificationCode.trim() || verificationCode.length !== 6) {
+      setOtpError(true);
       Alert.alert(t('common.error'), t('sms.enterVerificationCode'));
       return;
     }
 
+    setOtpError(false);
     setIsLoading(true);
 
     try {
@@ -208,6 +241,8 @@ const UnifiedPhoneAuthScreen: React.FC<UnifiedPhoneAuthScreenProps> = ({ navigat
           first_name: userData.first_name,
           last_name: userData.last_name,
           password: userData.password,
+          birth_date: userData.birth_date,
+          gender: userData.gender,
         } : undefined
       );
 
@@ -219,21 +254,46 @@ const UnifiedPhoneAuthScreen: React.FC<UnifiedPhoneAuthScreenProps> = ({ navigat
 
         await completeAuthentication(response.data?.user);
 
-        Alert.alert(
-          t('common.success'),
-          message,
-          [
-            {
-              text: t('common.ok'),
-              onPress: () => navigation.reset({
-                index: 0,
-                routes: [{ name: 'AuthWelcome' }],
-              }),
-            },
-          ]
-        );
+        // Check if user has complete profile information
+        const user = response.data?.user;
+        const hasCompleteProfile = user?.birth_date && user?.gender;
+
+        if (!hasCompleteProfile) {
+          // User needs to complete their profile
+          Alert.alert(
+            t('common.success'),
+            message + '\n\n' + t('auth.completeYourProfile'),
+            [
+              {
+                text: t('common.ok'),
+                onPress: () => navigation.reset({
+                  index: 0,
+                  routes: [
+                    { name: 'Main' },
+                    { name: 'EditProfile', params: { isFirstTime: true } }
+                  ],
+                }),
+              },
+            ]
+          );
+        } else {
+          // Profile is complete, go to home
+          Alert.alert(
+            t('common.success'),
+            message,
+            [
+              {
+                text: t('common.ok'),
+                onPress: () => navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'AuthWelcome' }],
+                }),
+              },
+            ]
+          );
+        }
       } else {
-        Alert.alert(t('common.error'), response.message || t('sms.verificationFailed'));
+        Alert.alert(t('common.error'), getErrorMessage(response.message));
       }
     } catch (error) {
       console.error('SMS verification error:', error);
@@ -271,7 +331,7 @@ const UnifiedPhoneAuthScreen: React.FC<UnifiedPhoneAuthScreenProps> = ({ navigat
       {/* Logo Container */}
       <View style={styles.logoSection}>
         <View style={styles.logoContainer}>
-          <Icon name="storefront" size={80} color={Colors.primary} />
+          <Icon name="storefront" size={35} color={Colors.primary} />
         </View>
         <Text style={[styles.logoText, isRTL && styles.textRTL]}>
           {t('auth.qabalan')}
@@ -400,6 +460,62 @@ const UnifiedPhoneAuthScreen: React.FC<UnifiedPhoneAuthScreenProps> = ({ navigat
 
       <View style={styles.inputContainer}>
         <Text style={[styles.inputLabel, isRTL && styles.textRTL]}>
+          {t('auth.birthDate')} *
+        </Text>
+        <TextInput
+          style={[
+            styles.input,
+            isRTL && styles.inputRTL,
+            errors.birth_date && styles.inputError,
+          ]}
+          value={userData.birth_date}
+          onChangeText={(text) => setUserData({ ...userData, birth_date: text })}
+          placeholder="YYYY-MM-DD"
+          placeholderTextColor={Colors.textSecondary}
+          textAlign={isRTL ? 'right' : 'left'}
+        />
+        {errors.birth_date && (
+          <Text style={[styles.errorText, isRTL && styles.textRTL]}>
+            {errors.birth_date}
+          </Text>
+        )}
+      </View>
+
+      <View style={styles.inputContainer}>
+        <Text style={[styles.inputLabel, isRTL && styles.textRTL]}>
+          {t('auth.gender')} *
+        </Text>
+        <View style={styles.genderContainer}>
+          {['male', 'female'].map((g) => (
+            <TouchableOpacity
+              key={g}
+              style={[
+                styles.genderOption,
+                userData.gender === g && styles.genderOptionSelected,
+              ]}
+              onPress={() => setUserData({ ...userData, gender: g })}
+            >
+              <Text
+                style={[
+                  styles.genderOptionText,
+                  userData.gender === g && styles.genderOptionTextSelected,
+                  isRTL && styles.textRTL,
+                ]}
+              >
+                {t(`auth.${g}`)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {errors.gender && (
+          <Text style={[styles.errorText, isRTL && styles.textRTL]}>
+            {errors.gender}
+          </Text>
+        )}
+      </View>
+
+      <View style={styles.inputContainer}>
+        <Text style={[styles.inputLabel, isRTL && styles.textRTL]}>
           {t('auth.password')}
         </Text>
         <TextInput
@@ -474,29 +590,30 @@ const UnifiedPhoneAuthScreen: React.FC<UnifiedPhoneAuthScreenProps> = ({ navigat
         </Text>
       </View>
 
-      <View style={styles.inputContainer}>
-        <Text style={[styles.inputLabel, isRTL && styles.textRTL]}>
-          {t('sms.verificationCode')}
+      <View style={styles.otpContainer}>
+        <Text style={[styles.otpLabel, isRTL && styles.textRTL]}>
+          {t('sms.enterCode')}
         </Text>
-        <TextInput
-          style={[styles.input, isRTL && styles.inputRTL]}
+        <OTPInput
+          length={6}
           value={verificationCode}
-          onChangeText={setVerificationCode}
-          placeholder={t('sms.enterVerificationCode')}
-          placeholderTextColor={Colors.textSecondary}
-          keyboardType="numeric"
-          textAlign={isRTL ? 'right' : 'left'}
-          autoFocus
+          onChange={(otp) => {
+            setVerificationCode(otp);
+            setOtpError(false);
+          }}
+          error={otpError}
+          errorMessage={otpError ? t('sms.invalidCode') : undefined}
+          autoFocus={true}
         />
       </View>
 
       <TouchableOpacity
         style={[
           styles.sendButton,
-          (isLoading || !verificationCode.trim()) && styles.sendButtonDisabled,
+          (isLoading || verificationCode.length !== 6) && styles.sendButtonDisabled,
         ]}
         onPress={handleVerifyCode}
-        disabled={isLoading || !verificationCode.trim()}
+        disabled={isLoading || verificationCode.length !== 6}
       >
         {isLoading ? (
           <ActivityIndicator color={Colors.textWhite} size="small" />
@@ -584,6 +701,17 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     marginBottom: Spacing.lg,
+  },
+  otpContainer: {
+    marginBottom: 32,
+    paddingHorizontal: 20,
+  },
+  otpLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    marginBottom: 16,
+    textAlign: 'center',
   },
   inputLabel: {
     ...Typography.body.small,
@@ -693,29 +821,29 @@ const styles = StyleSheet.create({
   },
   logoSection: {
     alignItems: 'center',
-    marginTop: 40,
-    marginBottom: 40,
+    marginTop: 15,
+    marginBottom: 15,
   },
   logoContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: '#f0f8ff',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 8,
     borderWidth: 2,
     borderColor: Colors.primary,
   },
   logoText: {
-    fontSize: 24,
+    fontSize: 14,
     fontWeight: 'bold',
     color: Colors.primary,
     letterSpacing: 1,
   },
   welcomeSection: {
     alignItems: 'center',
-    marginBottom: 50,
+    marginBottom: 20,
     paddingHorizontal: 20,
   },
   welcomeTitle: {
@@ -790,6 +918,34 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+  },
+  genderContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  genderOption: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.backgroundDark,
+    backgroundColor: Colors.backgroundCard,
+    minWidth: '48%',
+    alignItems: 'center',
+  },
+  genderOptionSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: `${Colors.primary}15`,
+  },
+  genderOptionText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+  },
+  genderOptionTextSelected: {
+    color: Colors.primary,
+    fontWeight: '600',
   },
 });
 

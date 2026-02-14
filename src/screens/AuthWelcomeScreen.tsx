@@ -24,7 +24,7 @@ interface AuthWelcomeScreenProps {
 const AuthWelcomeScreen: React.FC<AuthWelcomeScreenProps> = ({ navigation }) => {
   const { t } = useTranslation();
   const { currentLanguage } = useLanguage();
-  const isRTL = false; // Override to force LTR
+  const isRTL = currentLanguage === 'ar';
   const { continueAsGuest } = useAuth();
 
   const handlePhoneAuth = () => {
@@ -83,7 +83,7 @@ const AuthWelcomeScreen: React.FC<AuthWelcomeScreenProps> = ({ navigation }) => 
                 {t('auth.continueWithPhone')}
               </Text>
               <Icon 
-                name="chevron-forward"
+                name={isRTL ? 'chevron-back' : 'chevron-forward'}
                 size={20} 
                 color={Colors.textWhite} 
               />

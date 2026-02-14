@@ -17,6 +17,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { Colors, Typography, Spacing, BorderRadius, Shadow } from '../theme';
+import { OTPInput } from '../components/common';
 import apiService, { User } from '../services/apiService';
 
 interface SMSVerificationScreenProps {
@@ -40,9 +41,8 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
   route,
 }) => {
   const { t } = useTranslation();
-  const { currentLanguage } = useLanguage();
-  const isRTL = false; // Override to force LTR
-  const { updateUser, refreshUser } = useAuth();
+  const { currentLanguage, isRTL } = useLanguage();
+  const { updateUser, refreshUser, setPendingProfileCompletion } = useAuth();
   const { phone = '', isExistingUser = true, userData } = route.params || {};
 
   const [verificationCode, setVerificationCode] = useState('');
@@ -50,6 +50,7 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
   const [isResending, setIsResending] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [formattedPhone, setFormattedPhone] = useState('');
+  const [otpError, setOtpError] = useState(false);
 
   useEffect(() => {
     // Format phone number for display
@@ -78,8 +79,28 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
     }
   };
 
+  const getErrorMessage = (errorMessage: string | undefined): string => {
+    if (!errorMessage) return t('sms.verificationFailed');
+    
+    const lowerError = errorMessage.toLowerCase();
+    
+    if (lowerError.includes('invalid') || lowerError.includes('expired')) {
+      return t('sms.invalidOrExpiredCode');
+    }
+    if (lowerError.includes('already used')) {
+      return t('sms.codeAlreadyUsed');
+    }
+    if (lowerError.includes('too many') || lowerError.includes('too many attempts')) {
+      return t('sms.tooManyAttempts');
+    }
+    
+    // Fallback to default error message
+    return t('sms.verificationFailed');
+  };
+
   const handleVerifyCode = async () => {
-    if (!verificationCode.trim()) {
+    if (!verificationCode.trim() || verificationCode.length !== 6) {
+      setOtpError(true);
       Alert.alert(
         t('common.error'),
         t('sms.enterVerificationCode')
@@ -87,6 +108,7 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
       return;
     }
 
+    setOtpError(false);
     setIsLoading(true);
 
     try {
@@ -95,13 +117,18 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
         const response = await apiService.loginWithSMS(phone, verificationCode);
 
         if (response.success) {
+          // Check if user has complete profile information
+          const user = response.data?.user;
+          const hasCompleteProfile = user?.birth_date && user?.gender;
+
+          if (!hasCompleteProfile) {
+            setPendingProfileCompletion(true);
+          }
+
+          // Activate session - this switches AppNavigator from AuthNavigator to Tab.Navigator
           await activateAuthenticatedSession(response.data?.user);
-          navigation.reset({
-            index: 0,
-            routes: [{ name: 'AuthWelcome' }],
-          });
         } else {
-          Alert.alert(t('common.error'), response.message || t('sms.verificationFailed'));
+          Alert.alert(t('common.error'), getErrorMessage(response.message));
         }
       } else {
         // New user - registration flow with basic user info
@@ -120,18 +147,18 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
           const loginAfterRegister = await apiService.loginWithSMS(phone, verificationCode);
 
           if (loginAfterRegister.success) {
-            navigation.reset({
-              index: 0,
-              routes: [{ 
-                name: 'AddressSetup',
-                params: {
-                  isFirstTime: true,
-                  phone: phone,
-                },
-              }],
-            });
+            // Check if user has complete profile information
+            const user = loginAfterRegister.data?.user;
+            const hasCompleteProfile = user?.birth_date && user?.gender;
+
+            if (!hasCompleteProfile) {
+              setPendingProfileCompletion(true);
+            }
+
+            // Activate session - this switches AppNavigator from AuthNavigator to Tab.Navigator
+            await activateAuthenticatedSession(loginAfterRegister.data?.user);
           } else {
-            Alert.alert(t('common.error'), loginAfterRegister.message || t('sms.verificationFailed'));
+            Alert.alert(t('common.error'), getErrorMessage(loginAfterRegister.message));
           }
         } else {
           // If registration fails, might be because user already exists
@@ -139,13 +166,18 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
           const loginResponse = await apiService.loginWithSMS(phone, verificationCode);
           
           if (loginResponse.success) {
+            // Check if user has complete profile information
+            const user = loginResponse.data?.user;
+            const hasCompleteProfile = user?.birth_date && user?.gender;
+
+            if (!hasCompleteProfile) {
+              setPendingProfileCompletion(true);
+            }
+
+            // Activate session - this switches AppNavigator from AuthNavigator to Tab.Navigator
             await activateAuthenticatedSession(loginResponse.data?.user);
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'AuthWelcome' }],
-            });
           } else {
-            Alert.alert(t('common.error'), registrationResponse.message || t('sms.verificationFailed'));
+            Alert.alert(t('common.error'), getErrorMessage(registrationResponse.message));
           }
         }
       }
@@ -172,7 +204,7 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
           t('sms.codeResent')
         );
       } else {
-        Alert.alert(t('common.error'), response.message || t('sms.resendFailed'));
+        Alert.alert(t('common.error'), getErrorMessage(response.message || '') || t('sms.resendFailed'));
       }
     } catch (error) {
       console.error('SMS resend error:', error);
@@ -201,44 +233,43 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
                 color={Colors.textPrimary}
               />
             </TouchableOpacity>
-            <Text style={[styles.headerTitle, isRTL && styles.textRTL]}>
+            <Text style={styles.headerTitle}>
               {t('sms.verification')}
             </Text>
-            <View style={styles.headerSpacer} />
-          </View>
-
-          {/* SMS Icon */}
-          <View style={styles.iconContainer}>
-            <Icon name="phone-portrait" size={80} color={Colors.primary} />
           </View>
 
           {/* Title and Description */}
           <View style={styles.titleContainer}>
-            <Text style={[styles.title, isRTL && styles.textRTL]}>
+            <Text style={[styles.title, isRTL && styles.textRTLCenter]}>
               {t('sms.verificationTitle')}
             </Text>
-            <Text style={[styles.description, isRTL && styles.textRTL]}>
+            <Text style={[styles.description, isRTL && styles.textRTLCenter]}>
               {t('sms.verificationDescription', { phone: formattedPhone })}
             </Text>
+            <View style={[styles.phoneChip, isRTL && styles.phoneChipRTL]}>
+              {!isRTL && <Icon name="phone-portrait-outline" size={16} color={Colors.primary} />}
+              <Text style={styles.phoneChipText}>
+                {formattedPhone}
+              </Text>
+              {isRTL && <Icon name="phone-portrait-outline" size={16} color={Colors.primary} />}
+            </View>
           </View>
 
-          {/* Verification Code Input */}
-          <View style={styles.inputContainer}>
-            <Text style={[styles.inputLabel, isRTL && styles.textRTL]}>
-              {t('sms.verificationCode')}
+          {/* OTP Input */}
+          <View style={styles.otpContainer}>
+            <Text style={[styles.otpLabel, isRTL && styles.textRTLCenter]}>
+              {t('sms.enterCode')}
             </Text>
-            <TextInput
-              style={[
-                styles.input,
-                isRTL && styles.inputRTL,
-              ]}
+            <OTPInput
+              length={6}
               value={verificationCode}
-              onChangeText={setVerificationCode}
-              placeholder={t('sms.enterVerificationCode')}
-              placeholderTextColor={Colors.textSecondary}
-              keyboardType="numeric"
-              textAlign={isRTL ? 'right' : 'left'}
-              autoFocus
+              onChange={(otp) => {
+                setVerificationCode(otp);
+                setOtpError(false);
+              }}
+              error={otpError}
+              errorMessage={otpError ? t('sms.invalidCode') : undefined}
+              autoFocus={true}
             />
           </View>
 
@@ -262,7 +293,7 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
 
           {/* Resend Code */}
           <View style={styles.resendContainer}>
-            <Text style={[styles.resendText, isRTL && styles.textRTL]}>
+            <Text style={[styles.resendText, isRTL && styles.textRTLCenter]}>
               {t('sms.didntReceiveCode')}
             </Text>
             <TouchableOpacity
@@ -303,53 +334,115 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: Spacing.lg,
+    paddingHorizontal: 0,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.lg,
   },
   header: {
+    position: 'relative',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.md,
-    marginTop: Spacing.sm,
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    marginTop: 0,
+    paddingHorizontal: Spacing.lg,
+    minHeight: 50,
   },
   backButton: {
-    padding: Spacing.sm,
+    position: 'absolute',
+    left: Spacing.lg,
+    padding: Spacing.xs,
     borderRadius: BorderRadius.full,
-    backgroundColor: Colors.backgroundLight,
+    backgroundColor: Colors.background,
+    zIndex: 10,
   },
   backButtonRTL: {
-    transform: [{ scaleX: -1 }],
+    left: 'auto',
+    right: Spacing.lg,
   },
   headerTitle: {
     ...Typography.heading.h3,
     color: Colors.textPrimary,
+    textAlign: 'center',
+    flex: 1,
   },
   textRTL: {
     textAlign: 'right',
+    writingDirection: 'rtl',
+  },
+  textRTLReverse: {
+    textAlign: 'left',
+    writingDirection: 'rtl',
   },
   headerSpacer: {
-    width: 40,
+    display: 'none',
+  },
+  headerSpacerRTL: {
+    display: 'none',
   },
   iconContainer: {
-    alignItems: 'center',
-    marginVertical: Spacing.xl * 2,
+    display: 'none',
+  },
+  iconBackground: {
+    display: 'none',
   },
   titleContainer: {
     alignItems: 'center',
-    marginBottom: Spacing.xl,
+    marginBottom: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
   title: {
     ...Typography.heading.h2,
     color: Colors.textPrimary,
     textAlign: 'center',
     marginBottom: Spacing.sm,
+    fontWeight: '700',
   },
   description: {
     ...Typography.body.medium,
     color: Colors.textSecondary,
     textAlign: 'center',
-    lineHeight: 24,
+    lineHeight: 22,
+    marginBottom: Spacing.sm,
+  },
+  phoneChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primaryBackground,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+    gap: Spacing.xs,
+    marginTop: Spacing.md,
+    justifyContent: 'center',
+  },
+  phoneChipRTL: {
+    flexDirection: 'row-reverse',
+  },
+  phoneChipText: {
+    ...Typography.body.medium,
+    color: Colors.primary,
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'center',
+    writingDirection: 'ltr',
+  },
+  otpContainer: {
+    marginBottom: Spacing.lg,
+    marginTop: Spacing.lg,
     paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.lg,
+    backgroundColor: Colors.backgroundLight,
+    borderRadius: BorderRadius.lg,
+    marginHorizontal: Spacing.md,
+  },
+  otpLabel: {
+    ...Typography.body.large,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.md,
+    textAlign: 'center',
+    fontWeight: '600',
   },
   inputContainer: {
     marginBottom: Spacing.xl,
@@ -377,39 +470,51 @@ const styles = StyleSheet.create({
   },
   verifyButton: {
     backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.md,
+    borderRadius: BorderRadius.lg,
     paddingVertical: Spacing.md,
     alignItems: 'center',
-    marginBottom: Spacing.xl,
-    ...Shadow.sm,
+    marginBottom: Spacing.md,
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.md,
+    ...Shadow.md,
   },
   verifyButtonDisabled: {
     backgroundColor: Colors.textHint,
+    ...Shadow.none,
   },
   verifyButtonText: {
     ...Typography.body.large,
     color: Colors.textWhite,
-    fontWeight: '600',
+    fontWeight: '700',
+    fontSize: 14,
   },
   resendContainer: {
     alignItems: 'center',
-    marginTop: Spacing.lg,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderTopWidth: 0,
   },
   resendText: {
     ...Typography.body.medium,
     color: Colors.textSecondary,
     marginBottom: Spacing.sm,
+    textAlign: 'center',
   },
   resendButton: {
-    padding: Spacing.sm,
+    padding: Spacing.xs,
   },
   resendButtonText: {
-    ...Typography.body.medium,
+    ...Typography.body.small,
     color: Colors.primary,
     fontWeight: '600',
   },
   resendButtonTextDisabled: {
     color: Colors.textHint,
+  },
+  textRTLCenter: {
+    textAlign: 'center',
+    writingDirection: 'rtl',
   },
 });
 

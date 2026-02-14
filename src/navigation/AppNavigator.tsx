@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
+import React, { useMemo, useEffect, useRef, useCallback } from 'react';
+import { NavigationContainer, NavigationContainerRef, CommonActions } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useTranslation } from 'react-i18next';
@@ -359,13 +359,52 @@ interface AppNavigatorProps {
   navigationRef?: React.RefObject<NavigationContainerRef<any>>;
 }
 
-const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef }) => {
+const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef: externalNavRef }) => {
   const { t } = useTranslation();
   const { currentLanguage, isLanguageLoaded } = useLanguage();
   const isRTL = false; // Override to force LTR
-  const { isAuthenticated, isLoading, isGuest } = useAuth();
+  const { isAuthenticated, isLoading, isGuest, pendingProfileCompletion, setPendingProfileCompletion } = useAuth();
   const { itemCount } = useCart();
   const insets = useSafeAreaInsets();
+  const internalNavRef = useRef<NavigationContainerRef<any>>(null);
+
+  // Combine internal and external refs
+  const setNavRef = useCallback((ref: NavigationContainerRef<any> | null) => {
+    (internalNavRef as any).current = ref;
+    if (externalNavRef && 'current' in externalNavRef) {
+      (externalNavRef as any).current = ref;
+    }
+  }, [externalNavRef]);
+
+  // Handle pending profile completion navigation after Tab.Navigator mounts
+  useEffect(() => {
+    if (isAuthenticated && pendingProfileCompletion && internalNavRef.current) {
+      // Small delay to ensure navigation tree is fully ready
+      const timeout = setTimeout(() => {
+        if (internalNavRef.current) {
+          internalNavRef.current.dispatch(
+            CommonActions.reset({
+              index: 0,
+              routes: [
+                {
+                  name: 'Profile',
+                  state: {
+                    routes: [
+                      { name: 'ProfileMain' },
+                      { name: 'EditProfile', params: { isFirstTime: true } },
+                    ],
+                    index: 1,
+                  },
+                },
+              ],
+            })
+          );
+          setPendingProfileCompletion(false);
+        }
+      }, 300);
+      return () => clearTimeout(timeout);
+    }
+  }, [isAuthenticated, pendingProfileCompletion, setPendingProfileCompletion]);
 
   const tabScreens = useMemo<TabScreenConfig[]>(
     () => [
@@ -417,7 +456,7 @@ const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef }) => {
   return (
     <NavigationContainer 
       key={currentLanguage} 
-      ref={navigationRef}
+      ref={setNavRef}
     >
       {(isAuthenticated || isGuest) ? (
         <Tab.Navigator

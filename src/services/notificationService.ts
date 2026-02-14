@@ -33,6 +33,8 @@ class NotificationService {
   private isInitialized: boolean = false; // Add initialization guard
   private unreadCountCallback: ((count: number) => void) | null = null;
   private currentUserId: string | null = null;
+  private pendingNotification: any = null; // Store notification to process after navigation is ready
+  private navigationRetryCount: number = 0; // Track navigation retry attempts
 
   /**
    * Set current user ID for user-specific storage
@@ -107,6 +109,14 @@ class NotificationService {
     if (navigationRef) {
       this.navigationRef = navigationRef;
       console.log('[NOTIF][DEBUG] ✅ Navigation ref set');
+      
+      // Process any pending notification that was received before navigation was ready
+      if (this.pendingNotification) {
+        console.log('[NOTIF][DEBUG] 📮 Processing pending notification after navigation ready');
+        setTimeout(() => {
+          this.handleNotificationNavigation(this.pendingNotification);
+        }, 500);
+      }
     }
 
     try {
@@ -121,6 +131,10 @@ class NotificationService {
       // Get FCM token
       console.log('[NOTIF][DEBUG] 🎫 Getting FCM token...');
       await this.getFCMToken();
+
+      // Check if token needs refresh (>7 days old)
+      console.log('[NOTIF][DEBUG] 🔍 Checking if token needs refresh...');
+      await this.checkAndRefreshTokenIfNeeded();
 
       // Set up notification listeners
       console.log('[NOTIF][DEBUG] 👂 Setting up notification listeners...');
@@ -181,7 +195,9 @@ class NotificationService {
         // Store token locally
         console.log('[NOTIF][DEBUG] 💾 Storing token locally...');
         await AsyncStorage.setItem('fcm_token', token);
-        console.log('[NOTIF][DEBUG] ✅ Token stored locally');
+        // Store timestamp of token acquisition for refresh tracking
+        await AsyncStorage.setItem('fcm_token_timestamp', new Date().toISOString());
+        console.log('[NOTIF][DEBUG] ✅ Token stored locally with timestamp');
 
         // Register token with backend
         console.log('[NOTIF][DEBUG] 🌐 Attempting to register token with backend...');
@@ -228,7 +244,9 @@ class NotificationService {
         console.log('[NOTIF][DEBUG] ✅ FCM token registered with backend successfully');
         // Clear any pending token since we successfully registered
         await AsyncStorage.removeItem('pending_fcm_token');
-        console.log('[NOTIF][DEBUG] 🗑️ Pending token cleared');
+        // Update timestamp to mark successful registration
+        await AsyncStorage.setItem('fcm_token_timestamp', new Date().toISOString());
+        console.log('[NOTIF][DEBUG] 🗑️ Pending token cleared and timestamp updated');
       } else {
         console.log('[NOTIF][DEBUG] ❌ Backend registration failed:', response.message);
         throw new Error(response.message || 'Failed to register FCM token');
@@ -271,6 +289,41 @@ class NotificationService {
       }
     } catch (error) {
       console.error('❌ Failed to register pending FCM token:', error);
+    }
+  }
+
+  /**
+   * Check if token needs refresh and refresh if needed
+   * Tokens older than 7 days should be refreshed to ensure validity
+   */
+  private async checkAndRefreshTokenIfNeeded(): Promise<void> {
+    try {
+      const tokenTimestampStr = await AsyncStorage.getItem('fcm_token_timestamp');
+      
+      if (!tokenTimestampStr) {
+        console.log('[NOTIF][DEBUG] ℹ️ No token timestamp found, storing current timestamp');
+        await AsyncStorage.setItem('fcm_token_timestamp', new Date().toISOString());
+        return;
+      }
+
+      const tokenTimestamp = new Date(tokenTimestampStr);
+      const now = new Date();
+      const ageInDays = (now.getTime() - tokenTimestamp.getTime()) / (1000 * 60 * 60 * 24);
+
+      console.log(`[NOTIF][DEBUG] 📅 Token age: ${ageInDays.toFixed(1)} days`);
+
+      // If token is older than 7 days, refresh it
+      if (ageInDays > 7) {
+        console.log(`[NOTIF][DEBUG] Token is older than ${ageInDays.toFixed(1)} days, refreshing...`);
+        await this.refreshToken();
+        // Update timestamp after refresh
+        await AsyncStorage.setItem('fcm_token_timestamp', new Date().toISOString());
+      } else {
+        console.log('[NOTIF][DEBUG] ✅ Token is fresh enough, no refresh needed');
+      }
+    } catch (error) {
+      console.error('[NOTIF][DEBUG] ❌ Error checking/refreshing token:', error);
+      // Don't throw, just log for debugging
     }
   }
 
@@ -327,10 +380,16 @@ class NotificationService {
           setTimeout(() => {
             this.showNotificationPopup(
               remoteMessage.notification?.title || 'Notification',
-              remoteMessage.notification?.body || 'You have a new message'
+              remoteMessage.notification?.body || 'You have a new message',
+              'info',
+              remoteMessage.data
             );
           }, 1000);
-          this.handleNotificationNavigation(remoteMessage);
+          
+          // Delay navigation to ensure navigation is fully ready
+          setTimeout(() => {
+            this.handleNotificationNavigation(remoteMessage);
+          }, 2000);
         } else {
           console.log('[NOTIF] 📱 No initial notification found');
         }
@@ -388,38 +447,29 @@ class NotificationService {
     console.log('[NOTIF] 🔔 Showing local notification:', { title, body });
     
     try {
-      // Show popup notification
+      // Show popup notification (single notification method to avoid duplicates)
       const type = data?.type === 'support_reply' ? 'info' : 'info';
-      this.showNotificationPopup(title, body, type);
+      this.showNotificationPopup(title, body, type, data);
       
-      // Determine channel based on notification type
-      let channelType = 'default';
-      if (data.type === 'support') {
-        channelType = 'support';
-      } else if (data.type === 'order') {
-        channelType = 'orders';
-      }
-      
-      // Also try to show a native notification if possible
-      localNotificationService.showNotification(title, body, { ...data, type: channelType }, {
-        priority: 'high',
-        vibrate: true,
-        playSound: true,
-        largeIcon: 'ic_launcher',
-        smallIcon: 'ic_notification',
-      });
+      // Note: Removed duplicate native notification to avoid showing same notification twice
+      // The popup is sufficient for foreground notifications
     } catch (error) {
       console.log('[NOTIF] ❌ Local notification error:', error);
-      // Fallback to simple popup
-      this.showNotificationPopup(title, body, 'error');
+      // Fallback to simple popup with data for navigation
+      this.showNotificationPopup(title, body, 'error', data);
     }
   }
 
   /**
    * Show notification popup (wrapper for popup manager)
    */
-  private showNotificationPopup(title: string, body: string, type: 'success' | 'info' | 'warning' | 'error' = 'info') {
-    console.log('[NOTIF] 🔔 Showing notification popup:', { title, body, type });
+  private showNotificationPopup(
+    title: string, 
+    body: string, 
+    type: 'success' | 'info' | 'warning' | 'error' = 'info',
+    notificationData?: any
+  ) {
+    console.log('[NOTIF] 🔔 Showing notification popup:', { title, body, type, data: notificationData });
     
     const notificationManager = NotificationManager.getInstance();
     notificationManager.showNotification(
@@ -427,8 +477,11 @@ class NotificationService {
       body,
       type,
       () => {
-        console.log('[NOTIF] 📱 Notification popup tapped');
-        // Handle tap if needed
+        console.log('[NOTIF] 📱 Notification popup tapped - handling navigation');
+        // Handle navigation when user taps the popup
+        if (notificationData) {
+          this.handleNotificationNavigation({ data: notificationData });
+        }
       },
       4000 // 4 seconds duration
     );
@@ -512,29 +565,60 @@ class NotificationService {
   /**
    * Handle navigation when notification is tapped
    */
-  private handleNotificationNavigation(remoteMessage: any): void {
+  private handleNotificationNavigation(remoteMessage: any, retryCount: number = 0): void {
     if (!this.navigationRef) {
-      console.warn('[NOTIF] Navigation ref not set, cannot handle notification navigation');
+      console.warn('[NOTIF] Navigation ref not set, storing notification for later processing');
+      this.pendingNotification = remoteMessage;
       return;
     }
 
+    // Check if navigation is ready to navigate
+    if (!this.navigationRef.isReady || !this.navigationRef.isReady()) {
+      if (retryCount < 10) { // Max 10 retries (5 seconds total)
+        console.warn(`[NOTIF] Navigation not ready yet, retrying (${retryCount + 1}/10) in 500ms...`);
+        setTimeout(() => {
+          this.handleNotificationNavigation(remoteMessage, retryCount + 1);
+        }, 500);
+      } else {
+        console.error('[NOTIF] Navigation failed to become ready after 10 retries, giving up');
+      }
+      return;
+    }
+
+    // Clear any pending notification since we're processing it now
+    this.pendingNotification = null;
+
     const { data } = remoteMessage;
     
+    console.log('[NOTIF] 🧭 Handling notification navigation with data:', JSON.stringify(data, null, 2));
+    
     if (!data || !data.type) {
-      console.log('No navigation data in notification');
+      console.log('[NOTIF] ⚠️ No navigation data in notification, navigating to Home');
+      this.navigationRef.navigate('Home');
       return;
     }
 
     try {
+      console.log(`[NOTIF] 🎯 Processing notification type: ${data.type}`);
+      
       switch (data.type) {
+        case 'order':
         case 'order_update':
-          if (data.orderId) {
-            this.navigationRef.navigate('Orders', {
+          // Support both order_id and orderId field names
+          const orderId = data.orderId || data.order_id;
+          console.log(`[NOTIF] 📦 Navigating to order details with orderId: ${orderId}`);
+          
+          if (orderId) {
+            // Use proper nested navigation format - params go inside the screen params
+            this.navigationRef.navigate('Orders' as never, {
               screen: 'OrderDetails',
-              params: { orderId: parseInt(data.orderId) },
-            });
+              params: { orderId: parseInt(orderId) },
+              initial: false,
+            } as never);
+            console.log('[NOTIF] ✅ Navigation to OrderDetails initiated with orderId:', orderId);
           } else {
-            this.navigationRef.navigate('Orders');
+            console.log('[NOTIF] ⚠️ No orderId found, navigating to Orders list');
+            this.navigationRef.navigate('Orders' as never);
           }
           break;
 
@@ -664,11 +748,14 @@ class NotificationService {
         this.showNotificationPopup(
           remoteMessage.notification?.title || 'Missed Notification',
           remoteMessage.notification?.body || 'You have a new message',
-          'info'
+          'info',
+          remoteMessage.data
         );
         
-        // Handle navigation if needed
-        this.handleNotificationNavigation(remoteMessage);
+        // Handle navigation with delay to ensure navigation is ready
+        setTimeout(() => {
+          this.handleNotificationNavigation(remoteMessage);
+        }, 1500);
       } else {
         console.log('[NOTIF] 📭 No missed notifications found');
       }

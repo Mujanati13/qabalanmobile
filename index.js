@@ -17,8 +17,12 @@ I18nManager.forceRTL(false);
 // Read initial state from native
 console.log('[INDEX][RTL] Initial I18nManager.isRTL:', I18nManager.isRTL);
 
-// Function to initialize and register app
-async function initializeAndRegisterApp() {
+// Register app immediately (must be synchronous)
+console.log('[INDEX][RTL] Registering app with I18nManager.isRTL:', I18nManager.isRTL);
+AppRegistry.registerComponent(appName, () => App);
+
+// Initialize RTL settings asynchronously (in background)
+async function initializeRTLSettings() {
   try {
     console.log('[INDEX][RTL] Forcing LTR layout for all languages...');
     const savedLanguage = await AsyncStorage.getItem('user_language');
@@ -39,15 +43,7 @@ async function initializeAndRegisterApp() {
     // Default to LTR on error
     I18nManager.forceRTL(false);
   }
-  
-  // Register app
-  registerApp();
 }
 
-function registerApp() {
-  console.log('[INDEX][RTL] Registering app with I18nManager.isRTL:', I18nManager.isRTL);
-  AppRegistry.registerComponent(appName, () => App);
-}
-
-// Start initialization
-initializeAndRegisterApp();
+// Start RTL initialization in background
+initializeRTLSettings();

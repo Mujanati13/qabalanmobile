@@ -21,12 +21,18 @@ import apiService, { User } from '../services/apiService';
 
 interface EditProfileScreenProps {
   navigation: any;
+  route?: {
+    params?: {
+      isFirstTime?: boolean;
+    };
+  };
 }
 
-const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation }) => {
+const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation, route }) => {
   const { t } = useTranslation();
   const isRTL = false; // Override to force LTR
   const { user: authUser, updateUser } = useAuth();
+  const isFirstTime = route?.params?.isFirstTime || false;
 
   // Helper function to format date to YYYY-MM-DD
   const formatDateToYYYYMMDD = (dateStr: string): string | null => {
@@ -55,6 +61,7 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation }) => 
     email: '',
     phone: '',
     birth_date: '',
+    gender: '',
     notification_promo: true,
     notification_orders: true,
   });
@@ -71,6 +78,7 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation }) => 
         last_name: authUser.last_name || '',
         email: authUser.email || '',
         phone: authUser.phone || '',
+        gender: authUser.gender || '',
         birth_date: authUser.birth_date || '',
         notification_promo: authUser.notification_promo ?? true,
         notification_orders: authUser.notification_orders ?? true,
@@ -102,15 +110,25 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation }) => 
       newErrors.email = t('auth.invalidEmail');
     }
 
-    // Phone validation removed per backend comment
-    // Backend accepts any phone format now
+    // Phone validation - phone should already exist from SMS verification
+    // Just verify it exists for first-time users (it's read-only)
+    if (isFirstTime && !formData.phone.trim()) {
+      newErrors.phone = t('auth.phoneRequired');
+    }
 
-    // Birth date validation - check if it can be formatted to YYYY-MM-DD
-    if (formData.birth_date && formData.birth_date.trim()) {
+    // Birth date validation - required when isFirstTime
+    if (isFirstTime && !formData.birth_date.trim()) {
+      newErrors.birth_date = t('auth.birthDateRequired');
+    } else if (formData.birth_date && formData.birth_date.trim()) {
       const formatted = formatDateToYYYYMMDD(formData.birth_date.trim());
       if (!formatted) {
         newErrors.birth_date = t('profile.invalidBirthDate');
       }
+    }
+
+    // Gender validation - required when isFirstTime
+    if (isFirstTime && !formData.gender) {
+      newErrors.gender = t('auth.genderRequired');
     }
 
     setErrors(newErrors);
@@ -146,7 +164,8 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation }) => 
         last_name: formData.last_name.trim(),
         email: formData.email.trim(),
         phone: formData.phone ? formData.phone.trim() : undefined,
-        birth_date: birthDate
+        birth_date: birthDate,
+        gender: formData.gender || undefined
       };
 
       // Remove empty/null/undefined values to avoid backend validation issues
@@ -163,11 +182,26 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation }) => 
         // Update auth context with new user data
         updateUser(response.data);
         
-        Alert.alert(
-          t('common.success'),
-          t('profile.profileUpdated'),
-          [{ text: t('common.ok'), onPress: () => navigation.goBack() }]
-        );
+        // If this is first-time profile completion, navigate to home screen
+        if (isFirstTime) {
+          Alert.alert(
+            t('common.success'),
+            t('profile.profileCompleted'),
+            [{ 
+              text: t('common.ok'), 
+              onPress: () => navigation.reset({
+                index: 0,
+                routes: [{ name: 'Home' }],
+              })
+            }]
+          );
+        } else {
+          Alert.alert(
+            t('common.success'),
+            t('profile.profileUpdated'),
+            [{ text: t('common.ok'), onPress: () => navigation.goBack() }]
+          );
+        }
       } else {
         throw new Error(response.message || t('profile.updateFailed'));
       }
@@ -342,6 +376,24 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation }) => 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.form}>
+        {/* First-time profile completion notification */}
+        {isFirstTime && (
+          <View style={styles.notificationBanner}>
+            <Icon name="information-circle" size={24} color="#007AFF" />
+            <Text style={styles.notificationText}>
+              {t('profile.completeYourProfile')}
+            </Text>
+          </View>
+        )}
+        
+        {isFirstTime && (
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              {t('profile.requiredFieldsMessage')}
+            </Text>
+          </View>
+        )}
+
         {/* Profile Picture Section */}
         <View style={styles.profilePictureSection}>
           <View style={styles.avatarContainer}>
@@ -416,24 +468,34 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation }) => 
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>{t('profile.phone')}</Text>
+            <Text style={styles.label}>
+              {t('profile.phone')}
+              {isFirstTime && <Text style={styles.required}> *</Text>}
+            </Text>
             <TextInput
-              style={[styles.input, errors.phone && styles.inputError]}
+              style={[styles.input, errors.phone && styles.inputError, isFirstTime && styles.inputDisabled]}
               value={formData.phone}
               onChangeText={(value) => handleInputChange('phone', value)}
               placeholder={t('profile.phone')}
               keyboardType="phone-pad"
               textAlign={isRTL ? 'right' : 'left'}
+              editable={false}
             />
+            {isFirstTime && (
+              <Text style={styles.helperText}>{t('profile.phoneFromRegistration')}</Text>
+            )}
             {errors.phone && (
               <Text style={styles.errorText}>{errors.phone}</Text>
             )}
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>{t('profile.birthDate')}</Text>
+            <Text style={styles.label}>
+              {t('profile.birthDate')}
+              {isFirstTime && <Text style={styles.required}> *</Text>}
+            </Text>
             <TouchableOpacity 
-              style={styles.input}
+              style={[styles.input, errors.birth_date && styles.inputError]}
               onPress={handleDateChange}
             >
               <Text style={[
@@ -444,6 +506,40 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation }) => 
               </Text>
               <Icon name="calendar-outline" size={20} color="#666" />
             </TouchableOpacity>
+            {errors.birth_date && (
+              <Text style={styles.errorText}>{errors.birth_date}</Text>
+            )}
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>
+              {t('profile.gender')}
+              {isFirstTime && <Text style={styles.required}> *</Text>}
+            </Text>
+            <View style={styles.genderContainer}>
+              {['male', 'female'].map((g) => (
+                <TouchableOpacity
+                  key={g}
+                  style={[
+                    styles.genderOption,
+                    formData.gender === g && styles.genderOptionSelected,
+                  ]}
+                  onPress={() => handleInputChange('gender', g)}
+                >
+                  <Text
+                    style={[
+                      styles.genderOptionText,
+                      formData.gender === g && styles.genderOptionTextSelected,
+                    ]}
+                  >
+                    {t(`auth.${g}`)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {errors.gender && (
+              <Text style={styles.errorText}>{errors.gender}</Text>
+            )}
           </View>
         </View>
 
@@ -554,6 +650,36 @@ const styles = StyleSheet.create({
   form: {
     padding: 16,
   },
+  notificationBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF15',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    gap: 12,
+  },
+  notificationText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  infoBox: {
+    backgroundColor: '#FFF9E6',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FFD700',
+  },
+  infoText: {
+    fontSize: 13,
+    color: '#856404',
+    lineHeight: 20,
+  },
   profilePictureSection: {
     alignItems: 'center',
     backgroundColor: '#fff',
@@ -643,6 +769,16 @@ const styles = StyleSheet.create({
   },
   inputError: {
     borderColor: '#FF3B30',
+  },
+  inputDisabled: {
+    backgroundColor: '#f8f9fa',
+    opacity: 0.7,
+  },
+  helperText: {
+    fontSize: 12,
+    color: '#6c757d',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   inputText: {
     fontSize: 16,
@@ -801,6 +937,39 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 4,
     fontStyle: 'italic',
+  },
+  required: {
+    color: '#FF3B30',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  genderContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  genderOption: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#fff',
+    minWidth: '48%',
+    alignItems: 'center',
+  },
+  genderOptionSelected: {
+    borderColor: '#007AFF',
+    backgroundColor: '#007AFF15',
+  },
+  genderOptionText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  genderOptionTextSelected: {
+    color: '#007AFF',
+    fontWeight: '600',
   },
 });
 

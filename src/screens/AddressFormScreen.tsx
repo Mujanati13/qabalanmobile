@@ -25,6 +25,18 @@ import Geolocation from '@react-native-community/geolocation';
 import { request, PERMISSIONS, RESULTS } from 'react-native-permissions';
 import { WebView } from 'react-native-webview';
 
+// Use the same base URL as other services (includes /api)
+const API_BASE_URL = 'https://apiv2.qabalanbakery.com/api';
+
+// Generate unique session token for Google Places Autocomplete billing optimization
+const generateSessionToken = () => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
 interface AddressFormScreenProps {
   navigation: any;
   route: {
@@ -140,6 +152,7 @@ const AddressFormScreen: React.FC<AddressFormScreenProps> = ({ navigation, route
   const [mapSearchQuery, setMapSearchQuery] = useState('');
   const [mapSearchResults, setMapSearchResults] = useState<any[]>([]);
   const [isSearchingMap, setIsSearchingMap] = useState(false);
+  const [autocompleteSessionToken, setAutocompleteSessionToken] = useState(generateSessionToken());
   const [isLoadingMapLocation, setIsLoadingMapLocation] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const webViewRef = React.useRef<any>(null);
@@ -480,107 +493,136 @@ const AddressFormScreen: React.FC<AddressFormScreenProps> = ({ navigation, route
     await new Promise(resolve => setTimeout(resolve, 500));
     
     try {
-      // Provide common Jordan locations as fallback
-      const commonPlaces = [
-        { name: 'Amman Downtown', lat: 31.9539, lon: 35.9106 },
-        { name: 'Abdali, Amman', lat: 31.9614, lon: 35.9105 },
-        { name: 'Shmeisani, Amman', lat: 31.9704, lon: 35.9013 },
-        { name: 'Sweifieh, Amman', lat: 31.9386, lon: 35.8576 },
-        { name: 'Mecca Street, Amman', lat: 31.9211, lon: 35.8647 },
-        { name: 'Zarqa', lat: 32.0667, lon: 36.1000 },
-        { name: 'Irbid', lat: 32.5556, lon: 35.8500 },
-        { name: 'Aqaba', lat: 29.5320, lon: 35.0063 },
-      ];
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
       
-      // Simple local search through common places
-      const matchingPlaces = commonPlaces.filter(place => 
-        place.name.toLowerCase().includes(query.toLowerCase())
-      );
+      // Call backend proxy for Google Places Autocomplete (New API)
+      const url = `${API_BASE_URL}/places/autocomplete`;
       
-      if (matchingPlaces.length > 0) {
-        const formattedResults = matchingPlaces.map((place, index) => ({
-          id: `local_${index}`,
-          name: place.name,
-          latitude: place.lat,
-          longitude: place.lon,
-          address: {}
-        }));
-        
-        setMapSearchResults(formattedResults);
-      } else {
-        // Try the external API as fallback
-        try {
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ' Jordan')}&countrycodes=jo&limit=5&addressdetails=1`,
-            {
-              method: 'GET',
-              headers: {
-                'User-Agent': 'FECS-Mobile-App/1.0',
-                'Accept': 'application/json',
-              },
-            }
-          );
-          
-          if (response.ok) {
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-              const results = await response.json();
-              
-              if (Array.isArray(results) && results.length > 0) {
-                const formattedResults = results.map((result: any) => ({
-                  id: result.place_id || Math.random().toString(),
-                  name: result.display_name || 'Unknown location',
-                  latitude: parseFloat(result.lat),
-                  longitude: parseFloat(result.lon),
-                  address: result.address || {}
-                })).filter(result => !isNaN(result.latitude) && !isNaN(result.longitude));
-                
-                setMapSearchResults(formattedResults);
-                return;
-              }
-            }
-          }
-        } catch (apiError) {
-          console.log('External search API unavailable, using local search only');
-        }
-        
-        // No results found
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          input: query,
+          sessionToken: autocompleteSessionToken,
+          languageCode: currentLanguage === 'ar' ? 'ar' : 'en',
+        }),
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      // Check if response is ok before parsing JSON
+      if (!response.ok) {
+        console.error(`Places autocomplete failed with status ${response.status}`);
         setMapSearchResults([]);
+        return;
       }
       
-    } catch (error) {
-      console.error('Search error:', error);
+      const data = await response.json();
+      
+      // Ensure suggestions is an array
+      if (!Array.isArray(data.suggestions)) {
+        console.warn('Places API returned invalid data format');
+        setMapSearchResults([]);
+        return;
+      }
+      
+      // Map Google Places API (New) suggestions to our result format
+      const results = data.suggestions
+        .filter((suggestion: any) => suggestion.placePrediction)
+        .map((suggestion: any) => ({
+          place: suggestion.placePrediction.place,
+          text: suggestion.placePrediction.text?.text || '',
+          structuredFormat: suggestion.placePrediction.structuredFormat,
+        }));
+      
+      setMapSearchResults(results);
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.warn('Map search request timed out');
+      } else {
+        console.error('Map search error:', error);
+      }
       setMapSearchResults([]);
     } finally {
       setIsSearchingMap(false);
     }
   };
 
+  // Fetch place details from backend proxy to get coordinates
+  const fetchPlaceDetails = async (placeId: string) => {
+    try {
+      const url = new URL(`${API_BASE_URL}/places/details`);
+      url.searchParams.append('place_id', placeId);
+      url.searchParams.append('sessionToken', autocompleteSessionToken);
+      
+      const response = await fetch(url.toString());
+      
+      if (!response.ok) {
+        console.error(`Place Details failed with status ${response.status}`);
+        return null;
+      }
+      
+      const data = await response.json();
+      
+      if (!data.location) {
+        console.error('Place Details API error: No location in response');
+        return null;
+      }
+      
+      return {
+        latitude: data.location.latitude,
+        longitude: data.location.longitude,
+      };
+    } catch (error) {
+      console.error('Error fetching place details:', error);
+      return null;
+    }
+  };
+
   // Handle search result selection
-  const selectSearchResult = (result: any) => {
+  const selectSearchResult = async (result: any) => {
     // Show loading spinner while setting location on map
     setIsLoadingMapLocation(true);
     
+    // Fetch place details to get coordinates
+    const location = await fetchPlaceDetails(result.place);
+    
+    if (!location) {
+      setIsLoadingMapLocation(false);
+      Alert.alert(
+        t('common.error'),
+        t('addressForm.errorFetchingLocation') || 'Failed to get location details'
+      );
+      return;
+    }
+    
     const newRegion = {
-      latitude: result.latitude,
-      longitude: result.longitude,
+      latitude: location.latitude,
+      longitude: location.longitude,
       latitudeDelta: 0.005,
       longitudeDelta: 0.005,
     };
     
     setMapRegion(newRegion);
-    setMapLocation({ latitude: result.latitude, longitude: result.longitude });
-    setMapSearchQuery(result.name);
+    setMapLocation({ latitude: location.latitude, longitude: location.longitude });
+    setMapSearchQuery(result.text);
     setMapSearchResults([]);
     
     // Send location to webview
     if (webViewRef.current) {
       webViewRef.current.postMessage(JSON.stringify({
         type: 'set_location',
-        latitude: result.latitude,
-        longitude: result.longitude
+        latitude: location.latitude,
+        longitude: location.longitude
       }));
     }
+    
+    // Generate new session token after place selection (billing optimization)
+    setAutocompleteSessionToken(generateSessionToken());
     
     // Hide spinner after a short delay to allow map to update
     setTimeout(() => {
@@ -1945,13 +1987,13 @@ const AddressFormScreen: React.FC<AddressFormScreenProps> = ({ navigation, route
                 <ScrollView style={styles.mapSearchResultsList} keyboardShouldPersistTaps="handled">
                   {mapSearchResults.map((result) => (
                     <TouchableOpacity
-                      key={result.id}
+                      key={result.place}
                       style={[styles.mapSearchResultItem, isRTL && styles.rtlMapSearchResultItem]}
                       onPress={() => selectSearchResult(result)}
                     >
                       <Icon name="location" size={16} color="#007AFF" />
                       <Text style={[styles.mapSearchResultText, isRTL && styles.rtlMapSearchResultText]} numberOfLines={2}>
-                        {result.name}
+                        {result.text}
                       </Text>
                     </TouchableOpacity>
                   ))}

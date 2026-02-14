@@ -27,7 +27,7 @@ import notificationService from '../services/notificationService';
 import Icon from 'react-native-vector-icons/Ionicons';
 import Colors from '../theme/colors';
 import { Typography, Spacing, BorderRadius, Shadow } from '../theme';
-import { Button, Card, SearchBar } from '../components/common';
+import { Button, Card, SearchBar, CachedImage } from '../components/common';
 import { formatCurrency } from '../utils/currency';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -76,14 +76,18 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [isSearching, setIsSearching] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const [offersError, setOffersError] = useState<string>('');
-  const [storeAvailable, setStoreAvailable] = useState(true);
-  const [storeUnavailableMessage, setStoreUnavailableMessage] = useState({ en: '', ar: '' });
 
   // Auto-slide refs and state
   const bannerFlatListRef = useRef<FlatList>(null);
   const autoSlideTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [autoSlideInterval, setAutoSlideInterval] = useState(3000); // 3 seconds default
   const [isAutoSlideEnabled, setIsAutoSlideEnabled] = useState(true);
+
+  // All products infinite scroll state
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [allProductsPage, setAllProductsPage] = useState(1);
+  const [allProductsLoading, setAllProductsLoading] = useState(false);
+  const [allProductsHasMore, setAllProductsHasMore] = useState(true);
 
   useEffect(() => {
     loadHomeData();
@@ -93,24 +97,14 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     try {
       setLoading(true);
       
-      const [bannersRes, categoriesRes, featuredRes, homeTopRes, homeNewRes, offersRes, storeStatusRes] = await Promise.all([
+      const [bannersRes, categoriesRes, featuredRes, homeTopRes, homeNewRes, offersRes] = await Promise.all([
         ApiService.getBannerCategories(),
         ApiService.getTopCategories(50), // Increased from 8 to 50 to load all categories
         ApiService.getFeaturedProducts(6),
         ApiService.getHomeTopProducts(6),
         ApiService.getHomeNewProducts(6),
         ApiService.getFeaturedOffers(6),
-        ApiService.getStoreStatus(),
       ]);
-
-      // Check store availability
-      if (storeStatusRes.success && storeStatusRes.data) {
-        setStoreAvailable(storeStatusRes.data.available);
-        setStoreUnavailableMessage({
-          en: storeStatusRes.data.message_en || 'Store is currently unavailable',
-          ar: storeStatusRes.data.message_ar || 'المتجر غير متاح حالياً'
-        });
-      }
 
       if (bannersRes.success && bannersRes.data && Array.isArray(bannersRes.data)) {
         setBanners(bannersRes.data);
@@ -290,6 +284,52 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     setIsSearching(false);
   };
 
+  // Load all products for infinite scroll
+  const loadAllProducts = async (page: number = 1) => {
+    if (allProductsLoading || (!allProductsHasMore && page > 1)) return;
+
+    try {
+      setAllProductsLoading(true);
+      const response = await ApiService.getProducts({
+        page,
+        limit: 10,
+        sort: 'created_at',
+        order: 'desc',
+      });
+
+      if (response.success && response.data && Array.isArray(response.data)) {
+        if (page === 1) {
+          setAllProducts(response.data);
+        } else {
+          setAllProducts((prev) => [...prev, ...response.data]);
+        }
+        
+        // Check if there are more products to load
+        setAllProductsHasMore(response.data.length === 10);
+      } else {
+        setAllProductsHasMore(false);
+      }
+    } catch (error) {
+      console.error('Error loading all products:', error);
+      setAllProductsHasMore(false);
+    } finally {
+      setAllProductsLoading(false);
+    }
+  };
+
+  const loadMoreAllProducts = () => {
+    if (!allProductsLoading && allProductsHasMore) {
+      const nextPage = allProductsPage + 1;
+      setAllProductsPage(nextPage);
+      loadAllProducts(nextPage);
+    }
+  };
+
+  // Load initial batch of all products
+  useEffect(() => {
+    loadAllProducts(1);
+  }, []);
+
   // Navigation handlers - defined directly to avoid stale closure issues
   const handleBannerPress = (item: Category) => {
     const title = currentLanguage === 'ar' ? (item.title_ar || item.title_en || '') : (item.title_en || item.title_ar || '');
@@ -376,14 +416,20 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
         {bannerImage && !failedImages.has(`banner-${item.id}`) ? (
-          <Image
-            source={{ uri: bannerImage }}
+          <CachedImage
+            uri={bannerImage}
             style={styles.bannerImage}
             resizeMode="cover"
             pointerEvents="none"
+            showLoadingIndicator={true}
             onError={() => {
               setFailedImages(prev => new Set(prev).add(`banner-${item.id}`));
             }}
+            fallbackComponent={
+              <View style={[styles.bannerImage, styles.bannerIconFallback]}>
+                <Icon name="image-outline" size={60} color={Colors.primary} />
+              </View>
+            }
           />
         ) : (
           <View style={[styles.bannerImage, styles.bannerIconFallback]}>
@@ -421,14 +467,21 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       >
         <View style={styles.categoryImageContainer} pointerEvents="box-none">
           {item.image && !failedImages.has(`category-${item.id}`) ? (
-            <Image
-              source={{ uri: item.image }}
+            <CachedImage
+              uri={item.image}
               style={styles.categoryImage}
               resizeMode="cover"
               pointerEvents="none"
+              showLoadingIndicator={true}
+              loadingIndicatorSize="small"
               onError={() => {
                 setFailedImages(prev => new Set(prev).add(`category-${item.id}`));
               }}
+              fallbackComponent={
+                <View style={[styles.categoryImage, styles.categoryIconFallback]}>
+                  <Icon name="grid-outline" size={40} color={Colors.primary} />
+                </View>
+              }
             />
           ) : (
             <View style={[styles.categoryImage, styles.categoryIconFallback]}>
@@ -469,14 +522,21 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       >
         <View style={styles.productImageContainer} pointerEvents="box-none">
           {item.main_image && !failedImages.has(`product-${item.id}`) ? (
-            <Image
-              source={{ uri: ApiService.getImageUrl(item.main_image) }}
+            <CachedImage
+              uri={ApiService.getImageUrl(item.main_image)}
               style={styles.productImage}
               resizeMode="cover"
               pointerEvents="none"
+              showLoadingIndicator={true}
+              loadingIndicatorSize="small"
               onError={() => {
                 setFailedImages(prev => new Set(prev).add(`product-${item.id}`));
               }}
+              fallbackComponent={
+                <View style={[styles.productImage, styles.productIconFallback]}>
+                  <Icon name="cube-outline" size={50} color={Colors.primary} />
+                </View>
+              }
             />
           ) : (
             <View style={[styles.productImage, styles.productIconFallback]}>
@@ -530,6 +590,81 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     );
   }, [isRTL, t, failedImages, navigation, calculateDiscountPercentage, parsePrice, textDirection, currentLanguage]);
 
+  const renderGridProductItem = useCallback(({ item, index }: { item: Product; index: number }) => {
+    if (!item || typeof item !== 'object') return null;
+    
+    const title = currentLanguage === 'ar' ? (item.title_ar || item.title_en || '') : (item.title_en || item.title_ar || '');
+    const hasDiscount = item.sale_price && item.sale_price < item.base_price;
+    const isOutOfStock = item.stock_status === 'out_of_stock';
+
+    return (
+      <TouchableOpacity
+        style={styles.gridProductItem}
+        onPress={() => handleProductPress(item)}
+        disabled={isOutOfStock}
+        activeOpacity={0.7}
+      >
+        <View style={styles.gridProductImageContainer}>
+          {item.main_image && !failedImages.has(`product-${item.id}`) ? (
+            <CachedImage
+              uri={ApiService.getImageUrl(item.main_image)}
+              style={styles.gridProductImage}
+              resizeMode="cover"
+              showLoadingIndicator={true}
+              loadingIndicatorSize="small"
+              onError={() => {
+                setFailedImages(prev => new Set(prev).add(`product-${item.id}`));
+              }}
+              fallbackComponent={
+                <View style={[styles.gridProductImage, styles.productIconFallback]}>
+                  <Icon name="cube-outline" size={40} color={Colors.primary} />
+                </View>
+              }
+            />
+          ) : (
+            <View style={[styles.gridProductImage, styles.productIconFallback]}>
+              <Icon name="cube-outline" size={40} color={Colors.primary} />
+            </View>
+          )}
+          {item.is_featured && !isOutOfStock && (
+            <View style={[styles.featuredBadge, isRTL && styles.rtlFeaturedBadge]}>
+              <Icon name="star" size={10} color={Colors.textWhite} />
+            </View>
+          )}
+          {hasDiscount && !isOutOfStock && (
+            <View style={[styles.discountBadge, isRTL && styles.rtlDiscountBadge]}>
+              <Text style={[styles.discountText, { textAlign: 'left', writingDirection: 'ltr' }]}>
+                {calculateDiscountPercentage(item.base_price || 0, item.sale_price || 0)}%
+              </Text>
+            </View>
+          )}
+          {isOutOfStock && (
+            <View style={styles.outOfStockOverlay}>
+              <Text style={[styles.outOfStockBadgeText, { textAlign: 'left', writingDirection: 'ltr' }]}>{t('products.outOfStock')}</Text>
+            </View>
+          )}
+        </View>
+        
+        <View style={styles.gridProductInfo}>
+          <Text style={[styles.gridProductTitle, { textAlign: 'left', writingDirection: 'ltr' }]} numberOfLines={2}>
+            {title || t('common.product')}
+          </Text>
+          
+          <View style={[styles.priceContainer, isRTL && styles.rtlPriceContainer]}>
+            <Text style={[styles.currentPrice, { textAlign: 'left', writingDirection: 'ltr' }]}>
+              {formatCurrency(parsePrice(item.final_price ?? item.sale_price ?? item.base_price ?? 0), { isRTL })}
+            </Text>
+          </View>
+          {hasDiscount && !isOutOfStock && (
+            <Text style={[styles.originalPrice, { textAlign: 'left', writingDirection: 'ltr' }]}>
+              {formatCurrency(parsePrice(item.base_price || 0), { isRTL })}
+            </Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  }, [isRTL, t, failedImages, currentLanguage, calculateDiscountPercentage, parsePrice]);
+
   const renderOfferCard = useCallback(({ item }: { item: Offer }) => {
     if (!item || typeof item !== 'object') return null;
 
@@ -555,14 +690,21 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
         {imageSource && !failedImages.has(imageKey) ? (
-          <Image
-            source={{ uri: ApiService.getImageUrl(imageSource) }}
+          <CachedImage
+            uri={ApiService.getImageUrl(imageSource)}
             style={styles.offerImage}
             resizeMode="cover"
             pointerEvents="none"
+            showLoadingIndicator={true}
+            loadingIndicatorSize="small"
             onError={() => {
               setFailedImages((prev) => new Set(prev).add(imageKey));
             }}
+            fallbackComponent={
+              <View style={[styles.offerImage, styles.offerImageFallback]}>
+                <Icon name="gift-outline" size={40} color={Colors.primary} />
+              </View>
+            }
           />
         ) : (
           <View style={[styles.offerImage, styles.offerImageFallback]}>
@@ -647,9 +789,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       >
         {/* Modern Enhanced Header */}
         <View style={[styles.modernHeader, isRTL && styles.rtlModernHeader]}>
-          {/* App Title and Actions */}
+          {/* App Logo and Notification */}
           <View style={[styles.headerTop, isRTL && styles.rtlHeaderTop]}>
-            <View style={styles.logoContainerCentered}>
+            <View style={styles.logoCorner}>
               <Image 
                 source={currentLanguage === 'ar' 
                   ? require('../assets/logo-arabic.png')
@@ -659,7 +801,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 resizeMode="contain"
               />
             </View>
-            <View style={[styles.headerActionsAbsolute, isRTL && styles.rtlRowReverse]}>
+            <View style={styles.headerActions}>
               <TouchableOpacity 
                 style={styles.notificationButton}
                 onPress={() => navigation.navigate('Notifications')}
@@ -685,25 +827,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             />
           </View>
         </View>
-
-        {/* Store Unavailable Banner */}
-        {!storeAvailable && (
-          <View style={[styles.storeUnavailableBanner, isRTL && styles.rtlStoreUnavailableBanner]}>
-            <Icon name="alert-circle" size={24} color="#ff6b35" />
-            <View style={styles.storeUnavailableTextContainer}>
-              <Text style={[styles.storeUnavailableTitle, isRTL && styles.rtlText]}>
-                {t('home.storeUnavailable', 'Store Currently Unavailable')}
-              </Text>
-              <Text style={[styles.storeUnavailableMessage, isRTL && styles.rtlText]}>
-                {isRTL ? storeUnavailableMessage.ar : storeUnavailableMessage.en}
-              </Text>
-            </View>
-          </View>
-        )}
-
-        {/* Hide all content when store is unavailable */}
-        {storeAvailable && (
-          <>
             {/* Enhanced Search Results */}
             {searchQuery.trim().length > 0 && (
           <View style={styles.modernSearchResultsSection}>
@@ -1052,6 +1175,63 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           </View>
         )}
 
+        {/* Browse All Products Section with Infinite Scroll */}
+        {allProducts.length > 0 && (
+          <View style={styles.modernSection}>
+            <View style={[styles.modernSectionHeader, isRTL && styles.rtlModernSectionHeader]}>
+              <View>
+                <Text style={[styles.modernSectionTitle, { textAlign: 'left', writingDirection: 'ltr' }]}>
+                  {t('home.browseAllProducts') || 'Browse All Products'}
+                </Text>
+                <Text style={[styles.modernSectionSubtitle, { textAlign: 'left', writingDirection: 'ltr' }]}>
+                  {t('home.browseAllProductsDesc') || 'Explore our complete product catalog'}
+                </Text>
+              </View>
+            </View>
+            
+            <View style={styles.allProductsGrid}>
+              {allProducts.map((product, index) => (
+                <View key={`all-product-${allProductsPage}-${index}`} style={styles.allProductsGridItem}>
+                  {renderGridProductItem({ item: product, index })}
+                </View>
+              ))}
+              
+              {/* Loading indicator for more products */}
+              {allProductsLoading && (
+                <View key="loading-indicator" style={styles.allProductsLoadingMore}>
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                  <Text style={[styles.loadingMoreText, isRTL && styles.rtlText]}>
+                    {t('common.loadingMore', 'Loading more...')}
+                  </Text>
+                </View>
+              )}
+              
+              {/* Load more button */}
+              {!allProductsLoading && allProductsHasMore && (
+                <TouchableOpacity
+                  key="load-more-button"
+                  style={styles.loadMoreButton}
+                  onPress={loadMoreAllProducts}
+                >
+                  <Text style={styles.loadMoreButtonText}>
+                    {t('common.loadMore', 'Load More')}
+                  </Text>
+                  <Icon name="chevron-down" size={20} color={Colors.primary} />
+                </TouchableOpacity>
+              )}
+              
+              {/* End of products message */}
+              {!allProductsLoading && !allProductsHasMore && allProducts.length > 0 && (
+                <View key="end-of-products" style={styles.endOfProductsContainer}>
+                  <Text style={[styles.endOfProductsText, isRTL && styles.rtlText]}>
+                    {t('common.endOfProducts', 'You\'ve seen all products')}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
         {/* Empty State with Better UX */}
         {!loading && !searchQuery && banners.length === 0 && categories.length === 0 && featuredProducts.length === 0 && topProducts.length === 0 && (
           <View style={styles.emptyState}>
@@ -1080,8 +1260,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               </View>
             ))}
           </View>
-        )}
-          </>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -1130,21 +1308,23 @@ const styles = StyleSheet.create({
   },
   headerTop: {
     flexDirection: 'row',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: Spacing.md,
-    position: 'relative',
     minHeight: 50,
   },
   rtlHeaderTop: {
     flexDirection: 'row-reverse',
-    justifyContent: 'center',
   },
   appTitleSection: {
     flex: 1,
   },
   headerSpacer: {
     flex: 1,
+  },
+  logoCorner: {
+    alignItems: 'flex-start',
+    justifyContent: 'center',
   },
   logoContainerCentered: {
     alignItems: 'center',
@@ -1638,7 +1818,6 @@ const styles = StyleSheet.create({
   bannerImage: {
     width: '100%',
     height: '100%',
-    resizeMode: 'cover',
   } as ImageStyle,
   bannerOverlay: {
     position: 'absolute',
@@ -2063,6 +2242,86 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSize.sm,
     color: '#5d4037',
     lineHeight: 20,
+    fontFamily: Typography.fontFamily.regular,
+  },
+  
+  // All Products Grid Styles
+  allProductsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: Spacing.sm,
+    justifyContent: 'space-between',
+  },
+  allProductsGridItem: {
+    width: '48%',
+    marginBottom: Spacing.md,
+  },
+  gridProductItem: {
+    backgroundColor: Colors.backgroundCard,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    ...Shadow.sm,
+  },
+  gridProductImageContainer: {
+    position: 'relative',
+    width: '100%',
+    height: 160,
+    backgroundColor: Colors.primaryBackground,
+  },
+  gridProductImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  } as ImageStyle,
+  gridProductInfo: {
+    padding: Spacing.md,
+  },
+  gridProductTitle: {
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.medium,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
+    minHeight: 36,
+    fontFamily: Typography.fontFamily.medium,
+  },
+  allProductsLoadingMore: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: Spacing.lg,
+    gap: Spacing.sm,
+  },
+  loadingMoreText: {
+    fontSize: Typography.fontSize.sm,
+    color: Colors.textSecondary,
+    fontFamily: Typography.fontFamily.regular,
+  },
+  loadMoreButton: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: Spacing.lg,
+    backgroundColor: Colors.primaryBackground,
+    borderRadius: BorderRadius.lg,
+    marginTop: Spacing.md,
+    gap: Spacing.xs,
+  },
+  loadMoreButtonText: {
+    fontSize: Typography.fontSize.md,
+    fontWeight: Typography.fontWeight.medium,
+    color: Colors.primary,
+    fontFamily: Typography.fontFamily.medium,
+  },
+  endOfProductsContainer: {
+    width: '100%',
+    paddingVertical: Spacing.xl,
+    alignItems: 'center',
+  },
+  endOfProductsText: {
+    fontSize: Typography.fontSize.sm,
+    color: Colors.textHint,
     fontFamily: Typography.fontFamily.regular,
   },
 });

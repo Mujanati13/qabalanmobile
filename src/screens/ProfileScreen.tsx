@@ -17,6 +17,7 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import apiService, { User, UserLoyaltyPoints } from '../services/apiService';
 import Colors from '../theme/colors';
 import { Typography, Spacing, BorderRadius, Shadow } from '../theme';
+import { CachedImage } from '../components/common';
 
 interface ProfileScreenProps {
   navigation: any;
@@ -164,7 +165,17 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
       <View style={[styles.profileHeader, isRTL && styles.rtlRowReverse]}>
         <View style={[styles.avatarContainer, isRTL && styles.rtlAvatarContainer]}>
           {user.avatar ? (
-            <Image source={{ uri: user.avatar }} style={styles.avatar} />
+            <CachedImage 
+              uri={user.avatar}
+              style={styles.avatar}
+              showLoadingIndicator={true}
+              loadingIndicatorSize="small"
+              fallbackComponent={
+                <View style={styles.avatarPlaceholder}>
+                  <Icon name="person" size={40} color="#666" />
+                </View>
+              }
+            />
           ) : (
             <View style={styles.avatarPlaceholder}>
               <Icon name="person" size={40} color="#666" />
