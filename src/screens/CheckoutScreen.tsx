@@ -32,6 +32,7 @@ import Toast from '../components/common/Toast';
 
 // Use the same base URL as other services (includes /api)
 const API_BASE_URL = 'https://apiv2.qabalanbakery.com/api';
+// const API_BASE_URL = 'http://192.168.72.1:3015/api';
 import EnhancedButton from '../components/common/EnhancedButton';
 import HapticFeedback from '../utils/HapticFeedback';
 import { formatCurrency } from '../utils/currency';
@@ -3178,11 +3179,6 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
                 ]}
                 onPress={() => setDeliveryZone('inside_amman')}
               >
-                <Icon 
-                  name="checkmark-circle" 
-                  size={20} 
-                  color={(deliveryZone === 'inside_amman' || deliveryZone === null) ? '#fff' : '#007AFF'} 
-                />
                 <Text style={[
                   styles.deliveryZoneText,
                   (deliveryZone === 'inside_amman' || deliveryZone === null) && styles.selectedDeliveryZoneText,
@@ -3200,11 +3196,6 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
                 ]}
                 onPress={() => setDeliveryZone('outside_amman')}
               >
-                <Icon 
-                  name="location-outline" 
-                  size={20} 
-                  color={deliveryZone === 'outside_amman' ? '#fff' : '#007AFF'} 
-                />
                 <Text style={[
                   styles.deliveryZoneText,
                   deliveryZone === 'outside_amman' && styles.selectedDeliveryZoneText,
