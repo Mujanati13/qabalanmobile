@@ -11,6 +11,15 @@ import {
 } from 'react-native';
 import { Colors, Typography, Spacing, BorderRadius, Shadow } from '../../theme';
 
+/**
+ * Convert Arabic-Indic digits (٠١٢٣٤٥٦٧٨٩) and Extended Arabic-Indic digits (۰۱۲۳۴۵۶۷۸۹)
+ * to Western digits (0-9) so OTP auto-fill works with Arabic SMS messages.
+ */
+const normalizeDigits = (text: string): string => {
+  return text.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+             .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0));
+};
+
 interface OTPInputProps {
   length?: number;
   value: string;
@@ -58,25 +67,28 @@ const OTPInput: React.FC<OTPInputProps> = ({
   }, [autoFocus]);
 
   const handleChangeText = (text: string, index: number) => {
-    // Remove any non-numeric characters
-    const sanitized = text.replace(/[^0-9]/g, '');
-    
-    // Handle paste of multiple digits
+    // Normalize Arabic-Indic digits to Western digits, then strip non-numeric
+    const sanitized = normalizeDigits(text).replace(/[^0-9]/g, '');
+
+    // Handle auto-fill or paste of multiple digits (e.g. full OTP code)
     if (sanitized.length > 1) {
+      // When auto-fill triggers on any field, distribute starting from field 0
+      // if the pasted length covers the entire OTP
+      const startIndex = sanitized.length >= length ? 0 : index;
       const newValue = value.split('');
-      const pastedDigits = sanitized.slice(0, length - index).split('');
-      
-      pastedDigits.forEach((digit, i) => {
-        newValue[index + i] = digit;
+      const digits = sanitized.slice(0, length - startIndex).split('');
+
+      digits.forEach((digit, i) => {
+        newValue[startIndex + i] = digit;
       });
-      
+
       const newOTP = newValue.join('').slice(0, length);
       onChange(newOTP);
-      
-      // Focus next empty field or last field
-      const nextIndex = Math.min(index + pastedDigits.length, length - 1);
+
+      // Focus the last filled field
+      const lastFilledIndex = Math.min(startIndex + digits.length, length) - 1;
       setTimeout(() => {
-        inputRefs.current[nextIndex]?.focus();
+        inputRefs.current[lastFilledIndex]?.focus();
       }, 10);
       return;
     }
@@ -85,7 +97,7 @@ const OTPInput: React.FC<OTPInputProps> = ({
     const newValue = value.split('');
     newValue[index] = sanitized;
     const newOTP = newValue.join('');
-    
+
     onChange(newOTP);
 
     // Auto-focus next input if digit was entered
@@ -158,12 +170,15 @@ const OTPInput: React.FC<OTPInputProps> = ({
                 onFocus={() => handleFocus(index)}
                 onBlur={handleBlur}
                 keyboardType="number-pad"
-                maxLength={1}
+                maxLength={length}
                 selectTextOnFocus
                 editable={!disabled}
-                textContentType="oneTimeCode" // iOS auto-fill support
-                autoComplete={Platform.OS === 'android' ? 'sms-otp' : 'one-time-code'} // Android auto-fill
-                importantForAutofill="yes"
+                // OTP auto-fill hints only on the first input to avoid conflicts
+                textContentType={index === 0 ? 'oneTimeCode' : 'none'}
+                autoComplete={index === 0
+                  ? (Platform.OS === 'android' ? 'sms-otp' : 'one-time-code')
+                  : 'off'}
+                importantForAutofill={index === 0 ? 'yes' : 'no'}
               />
             </View>
           );

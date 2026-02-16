@@ -1290,6 +1290,12 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   useEffect(() => {
     if (selectedBranchId) {
       console.log('🔄 Branch changed to:', selectedBranchId, '- triggering recalculation');
+      // Clear old branch stock warnings from previous branch
+      if (branchStockWarningSource === 'calculation') {
+        setBranchStockWarnings([]);
+        setBranchStockDetails([]);
+        setBranchStockWarningSource(null);
+      }
       calculateOrder();
     }
   }, [selectedBranchId]);
