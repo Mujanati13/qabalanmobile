@@ -40,6 +40,7 @@ const CachedImage: React.FC<CachedImageProps> = ({
   onLoadEnd,
   onError,
   cacheEnabled = true,
+  pointerEvents,
   ...imageProps
 }) => {
   const [loading, setLoading] = useState(true);
@@ -131,7 +132,7 @@ const CachedImage: React.FC<CachedImageProps> = ({
   }
 
   return (
-    <View style={[styles.container, containerStyle]}>
+    <View style={[styles.container, containerStyle]} pointerEvents={pointerEvents || 'auto'}>
       {cachedUri && (
         <Image
           {...imageProps}
@@ -143,7 +144,7 @@ const CachedImage: React.FC<CachedImageProps> = ({
         />
       )}
       {loading && showLoadingIndicator && (
-        <View style={styles.loadingOverlay}>
+        <View style={styles.loadingOverlay} pointerEvents="none">
           <ActivityIndicator 
             size={loadingIndicatorSize} 
             color={loadingIndicatorColor} 

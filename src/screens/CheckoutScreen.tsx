@@ -14,6 +14,8 @@ import {
   PermissionsAndroid,
   I18nManager,
   Dimensions,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Geolocation from '@react-native-community/geolocation';
@@ -220,7 +222,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   console.log('[CheckoutScreen] isArabic:', isArabic);
   
   const { user, isGuest } = useAuth();
-  const { items, totalAmount, clearCart } = useCart();
+  const { items, totalAmount, clearCart, removeFromCart, refreshCartProducts } = useCart();
   const formatAmount = useCallback((value: unknown) => formatCurrency(value, { isRTL: isArabic }), [isArabic]);
 
   const { branches, selectedBranchId, setSelectedBranchId, refreshBranches: refreshBranchList } = useBranch();
@@ -229,7 +231,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
   const [orderType, setOrderType] = useState<'delivery' | 'pickup'>('delivery');
-  const [deliveryZone, setDeliveryZone] = useState<'inside_amman' | 'outside_amman' | null>(null); // null = auto-detect
+  const [deliveryZone, setDeliveryZone] = useState<'inside_amman' | 'outside_amman' | null>('inside_amman'); // default to inside_amman
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [promoCode, setPromoCode] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<PromoCode | null>(null);
@@ -245,6 +247,23 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('success');
+  const isAmmanOnlyProduct = useCallback((product?: any): boolean => {
+    const value = product?.amman_only_delivery;
+    return value === 1 || value === '1' || value === true;
+  }, []);
+
+  const getCartLineItemKey = useCallback((item: CartItem): string => {
+    const variantsKey = item.variants && item.variants.length > 0
+      ? item.variants
+          .map(v => v.id)
+          .filter((id): id is number => typeof id === 'number')
+          .sort((a, b) => a - b)
+          .join('-')
+      : 'none';
+
+    return `${item.product_id}-${item.variant_id ?? 'base'}-${variantsKey}`;
+  }, []);
+
   const [orderProgress, setOrderProgress] = useState(0);
   const [canPlaceOrder, setCanPlaceOrder] = useState(false);
   const [branchStockWarnings, setBranchStockWarnings] = useState<string[]>([]);
@@ -254,6 +273,9 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   const [branchAvailabilityLoading, setBranchAvailabilityLoading] = useState(false);
   const branchAvailabilityRequestRef = useRef(0);
   const branchAvailabilitySignatureRef = useRef<string | null>(null);
+  
+  // Store status state
+  const [storeStatus, setStoreStatus] = useState<{ accepting_orders: boolean; message_en: string; message_ar: string } | null>(null);
   
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -265,6 +287,12 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   const lastValidatedPromoRef = useRef<PromoCode | null>(null);
   // Track if user manually removed promo to prevent auto-reapply
   const promoManuallyRemovedRef = useRef<boolean>(false);
+  // Track app state for refreshing store status
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  // Always-current ref for selectedBranchId so calculateOrder doesn't capture a stale closure
+  const selectedBranchIdRef = useRef<number | null>(selectedBranchId ?? null);
+  // Prevent AppState / focus callbacks from refreshing while payment WebView is open
+  const isPaymentInProgressRef = useRef(false);
 
   // Error states for modern error handling
   const [errors, setErrors] = useState({
@@ -814,10 +842,14 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   };
 
   const handleError = (errorType: keyof typeof errors, error: any, fallbackMessage: string) => {
-    const errorMessage = error instanceof Error ? error.message : 
+    const rawMessage = error instanceof Error ? error.message : 
                         (typeof error === 'string' ? error : fallbackMessage);
     
-    setErrors(prev => ({ ...prev, [errorType]: errorMessage }));
+    // Normalize and validate the message
+    const normalizedMessage = (rawMessage || '').toString().trim();
+    const safeMessage = normalizedMessage.length > 0 ? normalizedMessage : fallbackMessage;
+    
+    setErrors(prev => ({ ...prev, [errorType]: safeMessage }));
     
     // Auto-clear error after 5 seconds
     setTimeout(() => {
@@ -1064,13 +1096,18 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       }
       
       // Map Google Places API (New) suggestions to our result format
+      console.log('🔍 Backend autocomplete response:', data);
       const results = data.suggestions
         .filter((suggestion: any) => suggestion.placePrediction)
-        .map((suggestion: any) => ({
-          place: suggestion.placePrediction.place,
-          text: suggestion.placePrediction.text?.text || '',
-          structuredFormat: suggestion.placePrediction.structuredFormat,
-        }));
+        .map((suggestion: any) => {
+          const result = {
+            place: suggestion.placePrediction.placeId || suggestion.placePrediction.place,
+            text: suggestion.placePrediction.text?.text || '',
+            structuredFormat: suggestion.placePrediction.structuredFormat,
+          };
+          console.log('📍 Mapped suggestion:', result);
+          return result;
+        });
       
       setMapSearchResults(results);
     } catch (error: any) {
@@ -1088,6 +1125,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   // Fetch place details from backend proxy to get coordinates
   const fetchPlaceDetails = async (placeId: string) => {
     try {
+      console.log('🌍 Fetching place details for:', placeId);
       const url = new URL(`${API_BASE_URL}/places/details`);
       url.searchParams.append('place_id', placeId);
       url.searchParams.append('sessionToken', autocompleteSessionToken);
@@ -1095,14 +1133,17 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       const response = await fetch(url.toString());
       
       if (!response.ok) {
-        console.error(`Place Details failed with status ${response.status}`);
+        console.error(`❌ Place Details failed with status ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Error details:', errorData);
         return null;
       }
       
       const data = await response.json();
+      console.log('📍 Place details response:', data);
       
       if (!data.location) {
-        console.error('Place Details API error: No location in response');
+        console.error('❌ Place Details API error: No location in response');
         return null;
       }
       
@@ -1117,6 +1158,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   };
 
   const selectSearchResult = async (result: { place: string; text: string }) => {
+    console.log('🎯 Selecting search result:', result);
     // Show loading state
     setIsSearchingMap(true);
     
@@ -1126,6 +1168,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     setIsSearchingMap(false);
     
     if (location) {
+      console.log('✅ Location selected:', location);
       setMapLocation(location);
       setMapRegion(location);
       setMapSearchQuery('');
@@ -1172,19 +1215,39 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       return null;
     }
     
-    const ammanOnlyItems = items.filter(item => item.product?.amman_only_delivery === 1);
+    const ammanOnlyItems = items.filter(item => isAmmanOnlyProduct(item.product));
     if (ammanOnlyItems.length === 0) {
       return null;
     }
 
     return {
       count: ammanOnlyItems.length,
+      restrictedKeys: ammanOnlyItems.map(item => getCartLineItemKey(item)),
       items: ammanOnlyItems.map(item => {
         const productName = isArabic ? (item.product?.title_ar || item.product?.title_en) : (item.product?.title_en || item.product?.title_ar);
-        return productName || 'Unknown Product';
+        return {
+          key: getCartLineItemKey(item),
+          name: productName || 'Unknown Product',
+          quantity: Number(item.quantity) || 1,
+          item,
+        };
       })
     };
-  }, [items, orderType, deliveryZone, isArabic]);
+  }, [items, orderType, deliveryZone, isArabic, isAmmanOnlyProduct, getCartLineItemKey]);
+
+  const handleRemoveRestrictedItem = useCallback((restrictedItem: CartItem) => {
+    removeFromCart(restrictedItem.product_id, restrictedItem.variant_id, restrictedItem.variants);
+  }, [removeFromCart]);
+
+  const handleRemoveAllRestrictedItems = useCallback(() => {
+    if (!ammanOnlyRestrictionWarning) {
+      return;
+    }
+
+    ammanOnlyRestrictionWarning.items.forEach(({ item }) => {
+      removeFromCart(item.product_id, item.variant_id, item.variants);
+    });
+  }, [ammanOnlyRestrictionWarning, removeFromCart]);
 
   // Validation effect to check if order can be placed
   useEffect(() => {
@@ -1201,7 +1264,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       
       // Check for Amman-only delivery restrictions
       if (orderType === 'delivery' && deliveryZone === 'outside_amman') {
-        const ammanOnlyItems = items.filter(item => item.product?.amman_only_delivery === 1);
+        const ammanOnlyItems = items.filter(item => isAmmanOnlyProduct(item.product));
         if (ammanOnlyItems.length > 0) {
           isValid = false;
         }
@@ -1210,8 +1273,9 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       // Check address for delivery
       if (orderType === 'delivery') {
         if (isGuest) {
-          // For guest delivery orders, require both address and GPS location
-          if (guestInfo.address.trim() && guestLocation && guestUseAutoLocation) {
+          // For guest delivery orders, require address text (GPS provides fee calculation)
+          // GPS location is helpful but address text is mandatory for order placement
+          if (guestInfo.address.trim()) {
             progress += 20;
           } else {
             isValid = false;
@@ -1280,12 +1344,23 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   }, [items]);
 
   // Recalculate when guest info changes (for delivery orders)
+  // Trigger when address has content OR when GPS location is set
   useEffect(() => {
-    if (isGuest && orderType === 'delivery' && guestInfo.address.trim()) {
-      console.log('🔄 Guest delivery info changed - triggering recalculation');
-      calculateOrder();
+    if (isGuest && orderType === 'delivery') {
+      const hasAddressText = guestInfo.address.trim().length >= 3;
+      const hasGPSLocation = guestLocation !== null;
+      
+      if (hasAddressText || hasGPSLocation) {
+        console.log('🔄 Guest delivery info changed - triggering recalculation');
+        calculateOrder();
+      }
     }
-  }, [isGuest, guestInfo.address, guestInfo.phone, guestInfo.fullName]);
+  }, [isGuest, guestInfo.address, guestInfo.phone, guestInfo.fullName, guestLocation]);
+
+  // Keep selectedBranchIdRef in sync with state so calculateOrder always has the latest value
+  useEffect(() => {
+    selectedBranchIdRef.current = selectedBranchId ?? null;
+  }, [selectedBranchId]);
 
   // Recalculate when branch changes (price overrides will be updated in calculateOrder)
   useEffect(() => {
@@ -1297,7 +1372,9 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         setBranchStockDetails([]);
         setBranchStockWarningSource(null);
       }
-      calculateOrder();
+      // Use setTimeout to ensure selectedBranchIdRef has updated before calculateOrder runs
+      const timer = setTimeout(() => calculateOrder(), 150);
+      return () => clearTimeout(timer);
     }
   }, [selectedBranchId]);
 
@@ -1941,6 +2018,80 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  // Check store status when app comes to foreground
+  const checkStoreStatus = useCallback(async () => {
+    try {
+      console.log('[CheckoutScreen] Checking store status...');
+      const response = await ApiService.checkStoreStatus();
+      console.log('[CheckoutScreen] Store status response:', JSON.stringify(response, null, 2));
+      if (response.success && response.data) {
+        console.log('[CheckoutScreen] Setting store status:', response.data.accepting_orders ? 'OPEN' : 'CLOSED');
+        setStoreStatus(response.data);
+      } else {
+        console.warn('[CheckoutScreen] Store status check failed or no data');
+      }
+    } catch (error) {
+      console.error('[CheckoutScreen] Failed to check store status:', error);
+    }
+  }, []);
+
+  // Check store status on mount
+  useEffect(() => {
+    checkStoreStatus();
+  }, [checkStoreStatus]);
+
+  // Debug: Monitor storeStatus changes
+  useEffect(() => {
+    if (storeStatus) {
+      console.log('[CheckoutScreen] storeStatus updated:', {
+        accepting_orders: storeStatus.accepting_orders,
+        message_en: storeStatus.message_en,
+        message_ar: storeStatus.message_ar
+      });
+    }
+  }, [storeStatus]);
+
+  // Listen to app state changes to refresh store status when app becomes active
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      console.log(`[CheckoutScreen] AppState changed from ${appStateRef.current} to ${nextAppState}`);
+      if (
+        appStateRef.current.match(/inactive|background/) &&
+        nextAppState === 'active'
+      ) {
+        if (isPaymentInProgressRef.current) {
+          console.log('[CheckoutScreen] Skipping refresh — payment in progress');
+          appStateRef.current = nextAppState;
+          return;
+        }
+        console.log('[CheckoutScreen] App became active, checking store status...');
+        checkStoreStatus();
+        refreshCartProducts();
+      }
+      appStateRef.current = nextAppState;
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => {
+      subscription.remove();
+    };
+  }, [checkStoreStatus, refreshCartProducts]);
+
+  // Refresh store status whenever this screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (isPaymentInProgressRef.current) {
+        // Screen re-focused after returning from payment flow — reset flag then refresh
+        isPaymentInProgressRef.current = false;
+        console.log('[CheckoutScreen] Returned from payment, resetting flag and refreshing...');
+      } else {
+        console.log('[CheckoutScreen] Screen focused, refreshing store status...');
+      }
+      checkStoreStatus();
+      refreshCartProducts();
+    }, [checkStoreStatus, refreshCartProducts])
+  );
+
   const calculateOrder = async () => {
   const requestId = ++calcRequestRef.current;
     if (!items || items.length === 0) {
@@ -1963,23 +2114,28 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
     // CRITICAL: Wait for address to load in delivery mode
     // For logged-in users, wait for selectedAddress
-    // For guests, wait for guestInfo.address
+    // For guests, require at least 3 characters to avoid validation errors
     if (orderType === 'delivery' && !isGuest && !selectedAddress) {
       console.log('⏳ Waiting for address to be selected before calculating delivery order...');
       setLoading(false);
       return;
     }
     
-    if (orderType === 'delivery' && isGuest && !guestInfo.address.trim()) {
-      console.log('⏳ Waiting for guest address before calculating delivery order...');
+    // For guests, allow calculation with GPS coordinates alone
+    // Address text validation happens at order placement, not calculation
+    if (orderType === 'delivery' && isGuest && !guestLocation && !guestInfo.address.trim()) {
+      console.log('⏳ Waiting for guest to select GPS location or enter address...');
       setLoading(false);
+      clearError('calculation');
       return;
     }
 
     console.log('🧮 Starting order calculation [#' + requestId + ']');
     console.log('📦 Order type:', orderType);
     console.log('📍 Selected address:', selectedAddress?.id, selectedAddress?.name);
-    console.log('🏢 Selected branch:', selectedBranchId);
+    // Use ref for latest branchId to avoid stale closure
+    const currentBranchId = selectedBranchIdRef.current ?? selectedBranchId;
+    console.log('🏢 Selected branch:', currentBranchId);
 
     try {
       setLoading(true);
@@ -1989,7 +2145,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
       // For delivery orders, ensure we have a branch before calculating
       if (orderType === 'delivery') {
-        const branchIdReady = selectedBranchId || (branches[0]?.id ?? null);
+        const branchIdReady = currentBranchId || (branches[0]?.id ?? null);
         if (!branchIdReady) {
           console.log('⏳ Waiting for branches to load before calculation...');
           setLoading(false);
@@ -2006,7 +2162,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
           special_instructions: item?.special_instructions,
         })),
         delivery_address_id: orderType === 'delivery' && selectedAddress ? selectedAddress.id : undefined,
-  branch_id: selectedBranchId || (branches[0]?.id ?? undefined),
+  branch_id: currentBranchId || (branches[0]?.id ?? undefined),
         order_type: orderType,
         promo_code: promoCandidate?.code,
         is_guest: isGuest,
@@ -2057,18 +2213,21 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
       // Provide guest delivery address context when available
       if (isGuest && orderType === 'delivery') {
-        // Always send text address if provided
+        // Send text address if provided, or fallback to "GPS Location" for calculation
         if (guestInfo.address?.trim()) {
           requestData.guest_delivery_address = guestInfo.address.trim();
+        } else if (guestLocation) {
+          // Allow calculation with GPS coordinates only
+          requestData.guest_delivery_address = 'GPS Location';
         }
         
-        // GPS coordinates supplement the text address (not replace it)
+        // GPS coordinates supplement the text address (or provide location when text is missing)
         if (guestLocation) {
           requestData.delivery_coordinates = {
             latitude: guestLocation.latitude,
             longitude: guestLocation.longitude,
           };
-          console.log('📍 Including GPS coordinates as supplement to text address:', {
+          console.log('📍 Including GPS coordinates for delivery fee calculation:', {
             textAddress: requestData.guest_delivery_address,
             gpsCoordinates: requestData.delivery_coordinates
           });
@@ -2344,6 +2503,23 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         const normalizedMessage = errorMessage.toLowerCase();
         const branchErrorPatterns = ['not available at branch', 'insufficient stock', 'out of stock', 'branch inventory'];
         const isBranchStockIssue = branchErrorPatterns.some(pattern => normalizedMessage.includes(pattern));
+        const isGuestAddressDetailsIssue =
+          isGuest &&
+          orderType === 'delivery' &&
+          (
+            guestInfo.address.trim().length < 3 || // Fallback: if address too short, assume it's address-related
+            normalizedMessage.includes('guest_delivery_address') ||
+            normalizedMessage.includes('guest delivery address') ||
+            normalizedMessage.includes('guest address') ||
+            normalizedMessage.includes('delivery address') ||
+            normalizedMessage.includes('address is required') ||
+            normalizedMessage.includes('address required') ||
+            normalizedMessage.includes('address details') ||
+            normalizedMessage.includes('enter address') ||
+            normalizedMessage.includes('provide address') ||
+            normalizedMessage.includes('address missing') ||
+            normalizedMessage.includes('address cannot be empty')
+          );
         
         // Check for Amman-only delivery restriction (expected validation, not an error)
         const isAmmanOnlyRestriction = normalizedMessage.includes('only be delivered inside amman') || 
@@ -2371,6 +2547,19 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
             setOrderCalculation(null);
           }
           // Don't show toast - the warning banner is already visible
+        } else if (isGuestAddressDetailsIssue) {
+          console.warn('⚠️ Guest address details still required for calculation:', errorMessage);
+          clearError('calculation');
+          setGuestErrors(prev => ({
+            ...prev,
+            address: t('checkout.enterDeliveryAddressRequired')
+          }));
+          setBranchStockWarnings([]);
+          setBranchStockDetails([]);
+          setBranchStockWarningSource(null);
+          if (requestId === calcRequestRef.current) {
+            setOrderCalculation(null);
+          }
         } else {
           // Actual errors that aren't expected validations
           console.error('❌ Calculate order error:', errorMessage);
@@ -2458,7 +2647,36 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       if (error?.message === t('checkout.requestTimeout')) {
         handleError('calculation', t('checkout.orderCalculationTimeout'), t('checkout.errorCalculating'));
       } else {
-        const fallbackMessage = typeof error === 'string' ? error : error?.message;
+        const responseMessage = error?.response?.data?.message || error?.response?.data?.message_ar;
+        const fallbackMessage = typeof error === 'string' ? error : (responseMessage || error?.message);
+        const normalizedFallbackMessage = (fallbackMessage || '').toString().toLowerCase();
+        const isGuestAddressDetailsIssue =
+          isGuest &&
+          orderType === 'delivery' &&
+          (
+            guestInfo.address.trim().length < 3 || // Fallback: if address too short, assume it's address-related
+            normalizedFallbackMessage.includes('guest_delivery_address') ||
+            normalizedFallbackMessage.includes('guest delivery address') ||
+            normalizedFallbackMessage.includes('guest address') ||
+            normalizedFallbackMessage.includes('delivery address') ||
+            normalizedFallbackMessage.includes('address is required') ||
+            normalizedFallbackMessage.includes('address required') ||
+            normalizedFallbackMessage.includes('address details') ||
+            normalizedFallbackMessage.includes('enter address') ||
+            normalizedFallbackMessage.includes('provide address') ||
+            normalizedFallbackMessage.includes('address missing') ||
+            normalizedFallbackMessage.includes('address cannot be empty')
+          );
+
+        if (isGuestAddressDetailsIssue) {
+          clearError('calculation');
+          setGuestErrors(prev => ({
+            ...prev,
+            address: t('checkout.enterDeliveryAddressRequired')
+          }));
+          return;
+        }
+
         const localizedMessage = localizeCalculationErrorMessage(fallbackMessage);
         handleError('calculation', localizedMessage, t('checkout.errorCalculating'));
         setToastMessage(localizedMessage);
@@ -2640,6 +2858,12 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         // Continue with order if check fails (fail-open for better UX)
       }
 
+      if (orderType === 'delivery' && deliveryZone === 'outside_amman' && ammanOnlyRestrictionWarning && ammanOnlyRestrictionWarning.count > 0) {
+        handleError('order', t('checkout.ammanOnlyRestrictionAction'), t('checkout.ammanOnlyRestrictionTitle'));
+        setPlacingOrder(false);
+        return;
+      }
+
       // Enhanced validation checks with detailed error reporting
       if (isGuest && !validateGuestInfo()) {
         // Guest validation errors will show inline in the form
@@ -2771,6 +2995,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         promo_code: appliedPromo?.code || undefined,
         special_instructions: specialInstructions?.trim() || undefined,
         is_guest: isGuest,
+        delivery_zone: orderType === 'delivery' ? deliveryZone : undefined,
         // Enhanced delivery information for better fee calculation
         expected_total: orderCalculation.total_amount,
         expected_delivery_fee: orderType === 'delivery' ? orderCalculation.delivery_fee : 0,
@@ -2894,6 +3119,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
           }
           try {
             console.log('🔄 Processing card payment for order:', orderId);
+            isPaymentInProgressRef.current = true;
             setShowPaymentModal(false);
             setToastMessage(t('checkout.paymentRedirectMessage'));
             setToastType('info');
@@ -3047,8 +3273,12 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     // Filter out errors that are handled inline for guests
     const activeErrors = Object.entries(errors).filter(([type, error]) => {
       if (error === null) return false;
+      if (typeof error !== 'string') return false;
+      if (error.trim().length === 0) return false;
       // Hide order validation errors for guests (they show inline in the form)
       if (isGuest && type === 'order') return false;
+      // Hide calculation errors for guest delivery when address is too short (they show inline)
+      if (isGuest && orderType === 'delivery' && type === 'calculation' && guestInfo.address.trim().length < 3) return false;
       return true;
     });
     
@@ -3057,9 +3287,10 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     return (
       <View style={styles.errorContainer}>
         {activeErrors.map(([type, message]) => {
+          const safeMessage = typeof message === 'string' ? message : '';
           // Translate error messages
-          let translatedMessage = message;
-          if (message.includes('Product variant') || message.includes('product variant')) {
+          let translatedMessage = safeMessage;
+          if (safeMessage.includes('Product variant') || safeMessage.includes('product variant')) {
             translatedMessage = t('checkout.productVariantNotFound');
           }
           
@@ -3077,7 +3308,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
                     {translatedMessage}
                   </Text>
                   {/* Show additional context for variant errors */}
-                  {message.includes('Product variant') && (
+                  {safeMessage.includes('Product variant') && (
                     <Text style={[{color: '#c22032', fontSize: 12, marginTop: 6}, isRTL && styles.rtlText]}>
                       {t('checkout.productVariantNotFoundDetail')}
                     </Text>
@@ -3099,7 +3330,6 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
   return (
     <SafeAreaView style={[styles.container, isRTL && styles.rtlContainer]}>
-      {renderErrorBanner()}
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
@@ -3315,11 +3545,30 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
               <Text style={[styles.branchWarningText, {marginTop: 12, fontWeight: '600'}, isRTL && styles.rtlText]}>
                 {t('checkout.ammanOnlyItems')}
               </Text>
-              {ammanOnlyRestrictionWarning.items.map((itemName, index) => (
-                <Text key={index} style={[styles.branchWarningText, isRTL && styles.rtlText, {marginTop: 4}]}>
-                  • {itemName}
-                </Text>
+              {ammanOnlyRestrictionWarning.items.map((restricted) => (
+                <View key={restricted.key} style={[styles.restrictedItemActionRow, isRTL && styles.rtlRowReverse]}>
+                  <Text style={[styles.branchWarningText, isRTL && styles.rtlText, {marginTop: 0, flex: 1}]}> 
+                    • {restricted.quantity > 1 ? `${restricted.name} ×${restricted.quantity}` : restricted.name}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.removeRestrictedItemButton}
+                    onPress={() => handleRemoveRestrictedItem(restricted.item)}
+                  >
+                    <Icon name="trash-outline" size={14} color="#d32f2f" />
+                    <Text style={styles.removeRestrictedItemText}>{isArabic ? 'إزالة' : 'Remove'}</Text>
+                  </TouchableOpacity>
+                </View>
               ))}
+
+              <TouchableOpacity
+                style={[styles.removeAllRestrictedButton, isRTL && styles.rtlRowReverse]}
+                onPress={handleRemoveAllRestrictedItems}
+              >
+                <Icon name="trash" size={16} color="#fff" style={{marginRight: isRTL ? 0 : 6, marginLeft: isRTL ? 6 : 0}} />
+                <Text style={[styles.removeAllRestrictedText, isRTL && styles.rtlText]}>
+                  {isArabic ? 'إزالة جميع المنتجات غير المتاحة' : 'Remove all restricted items'}
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -3337,6 +3586,11 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
           <View style={styles.itemsList}>
             {items.map((item, index) => {
+              const lineItemKey = getCartLineItemKey(item);
+              const isRestrictedItem = !!(
+                ammanOnlyRestrictionWarning &&
+                ammanOnlyRestrictionWarning.restrictedKeys.includes(lineItemKey)
+              );
               const productTitle = getProductTitle(item);
               const variantLabel = getVariantLabel(item);
               const unitPrice = getItemUnitPrice(item);
@@ -3353,11 +3607,27 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
               return (
                 <React.Fragment key={`${item.product_id}-${item.variant_id ?? 'base'}`}>
-                  <View style={[styles.checkoutItemRow, isRTL && styles.rtlRowReverse]}>
+                  <View style={[styles.checkoutItemRow, isRTL && styles.rtlRowReverse, isRestrictedItem && styles.restrictedCheckoutItemRow]}>
                     <View style={[styles.checkoutItemInfo, isRTL && styles.rtlAlignEnd]}>
-                      <Text style={[styles.checkoutItemTitle, isRTL && styles.rtlText]} numberOfLines={2}>
-                        {productTitle}
-                      </Text>
+                      <View style={[styles.checkoutTitleRow, isRTL && styles.rtlRowReverse]}>
+                        <Text style={[styles.checkoutItemTitle, isRTL && styles.rtlText, isRestrictedItem && styles.restrictedCheckoutItemTitle]} numberOfLines={2}>
+                          {productTitle}
+                        </Text>
+                        {isRestrictedItem && (
+                          <View style={styles.restrictedBadge}>
+                            <Text style={styles.restrictedBadgeText}>{isArabic ? 'خارج عمّان' : 'Outside Amman'}</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      {isRestrictedItem && (
+                        <View style={[styles.restrictedHintRow, isRTL && styles.rtlRowReverse]}>
+                          <Icon name="alert-circle" size={14} color="#d32f2f" style={{marginRight: isRTL ? 0 : 4, marginLeft: isRTL ? 4 : 0}} />
+                          <Text style={[styles.restrictedHintText, isRTL && styles.rtlText]}>
+                            {isArabic ? 'يجب إزالة هذا المنتج لإتمام الطلب خارج عمّان' : 'Remove this item to complete outside-Amman delivery'}
+                          </Text>
+                        </View>
+                      )}
 
                       {variantLabel && (
                         <View style={styles.variantDetailsContainer}>
@@ -3406,9 +3676,21 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
                           {t('cart.specialInstructions')}: {item.special_instructions}
                         </Text>
                       )}
+
+                      {isRestrictedItem && (
+                        <TouchableOpacity
+                          style={[styles.inlineRemoveRestrictedButton, isRTL && styles.rtlRowReverse]}
+                          onPress={() => handleRemoveRestrictedItem(item)}
+                        >
+                          <Icon name="trash-outline" size={14} color="#d32f2f" style={{marginRight: isRTL ? 0 : 4, marginLeft: isRTL ? 4 : 0}} />
+                          <Text style={[styles.inlineRemoveRestrictedText, isRTL && styles.rtlText]}>
+                            {isArabic ? 'إزالة المنتج' : 'Remove item'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
 
-                    <Text style={[styles.checkoutItemPrice, isRTL && styles.rtlCheckoutItemPrice]}>
+                    <Text style={[styles.checkoutItemPrice, isRTL && styles.rtlCheckoutItemPrice, isRestrictedItem && styles.restrictedCheckoutItemPrice]}>
                       {formatAmount(lineTotal)}
                     </Text>
                   </View>
@@ -3607,10 +3889,12 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
                     value={guestInfo.address}
                     onChangeText={(text) => {
                       setGuestInfo(prev => ({ ...prev, address: text }));
-                      // Clear error when user starts typing
+                      // Clear errors when user starts typing
                       if (guestErrors.address) {
                         setGuestErrors(prev => ({ ...prev, address: '' }));
                       }
+                      // Also clear any calculation errors that might be showing in the banner
+                      clearError('calculation');
                     }}
                     placeholder={guestUseAutoLocation 
                       ? t('checkout.addressWithGPSPlaceholder') || 'Enter street/building details (GPS added)'
@@ -3858,6 +4142,16 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
       {/* Enhanced Place Order Button */}
   <View style={[styles.bottomContainer, isRTL && styles.rtlContainer]}>
+        {/* Store Status Warning */}
+        {storeStatus && !storeStatus.accepting_orders && (
+          <View style={styles.storeClosedBanner}>
+            <Icon name="close-circle" size={20} color="#d32f2f" style={{ marginRight: 8 }} />
+            <Text style={styles.storeClosedText}>
+              {currentLanguage === 'ar' ? storeStatus.message_ar : storeStatus.message_en}
+            </Text>
+          </View>
+        )}
+
         {/* Order Progress Indicator */}
         {!canPlaceOrder && (
           <View style={styles.progressContainer}>
@@ -3876,7 +4170,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
           onPress={placeOrder}
           loading={placingOrder}
           loadingText={t('checkout.placingOrder')}
-          disabled={!canPlaceOrder || loading}
+          disabled={!canPlaceOrder || loading || (storeStatus && !storeStatus.accepting_orders)}
           variant={canPlaceOrder ? 'primary' : 'secondary'}
           size="large"
           icon={canPlaceOrder ? 'checkmark-circle' : 'alert-circle'}
@@ -3886,13 +4180,16 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         {!canPlaceOrder && (
           <Text style={[styles.requirementsText, isRTL ? styles.rtlText : styles.ltrText]}>
             {(() => {
+              // Check store status first
+              if (storeStatus && !storeStatus.accepting_orders) {
+                return currentLanguage === 'ar' ? storeStatus.message_ar : storeStatus.message_en;
+              }
               if (!items || items.length === 0) return t('checkout.addItemsToCart');
               // Check for Amman-only restriction FIRST (most specific)
               if (orderType === 'delivery' && deliveryZone === 'outside_amman' && ammanOnlyRestrictionWarning && ammanOnlyRestrictionWarning.count > 0) {
                 return t('checkout.ammanOnlyRestrictionAction');
               }
               if (orderType === 'delivery' && isGuest && !guestInfo.address.trim()) return t('checkout.enterDeliveryAddressRequired');
-              if (orderType === 'delivery' && isGuest && guestInfo.address.trim() && (!guestLocation || !guestUseAutoLocation)) return t('checkout.useGPSForDeliveryPrice');
               if (orderType === 'delivery' && !isGuest && !selectedAddress) return t('checkout.selectDeliveryAddress');
               if (isGuest && (!guestInfo.fullName.trim() || !guestInfo.phone.trim())) return t('checkout.completeContactInfo');
               if (!selectedBranchId && !branches[0]?.id) return t('checkout.selectBranchRequired');
@@ -4230,8 +4527,6 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
                   onPress={() => {
                     setSelectedBranchId(branch.id);
                     setShowBranchModal(false);
-                    // Trigger recalculation with new branch
-                    setTimeout(() => calculateOrder(), 300);
                   }}
                 >
                   <Icon 
@@ -4707,6 +5002,18 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     paddingVertical: 6,
   },
+  restrictedCheckoutItemRow: {
+    backgroundColor: '#fff1f0',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: '#ffcdd2',
+  },
+  checkoutTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   checkoutItemInfo: {
     flex: 1,
     marginEnd: 12,
@@ -4715,6 +5022,30 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
+  },
+  restrictedCheckoutItemTitle: {
+    color: '#b71c1c',
+  },
+  restrictedBadge: {
+    backgroundColor: '#d32f2f',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  restrictedBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  restrictedHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  restrictedHintText: {
+    fontSize: 12,
+    color: '#d32f2f',
+    fontWeight: '500',
   },
   rtlCheckoutItemTitle: {
     textAlign: 'right',
@@ -4776,6 +5107,26 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     minWidth: 80,
     marginStart: 12,
+  },
+  restrictedCheckoutItemPrice: {
+    color: '#b71c1c',
+  },
+  inlineRemoveRestrictedButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#ffebee',
+    borderWidth: 1,
+    borderColor: '#ef9a9a',
+  },
+  inlineRemoveRestrictedText: {
+    color: '#d32f2f',
+    fontSize: 12,
+    fontWeight: '600',
   },
   rtlCheckoutItemPrice: {
     textAlign: 'left',
@@ -5149,6 +5500,25 @@ const styles = StyleSheet.create({
   },
   dismissButton: {
     padding: 4,
+  },
+  
+  // Store Status Warning
+  storeClosedBanner: {
+    backgroundColor: '#ffebee',
+    borderLeftWidth: 4,
+    borderLeftColor: '#d32f2f',
+    padding: 12,
+    marginHorizontal: 10,
+    marginBottom: 10,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  storeClosedText: {
+    color: '#c62828',
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
   },
   
   // GPS Address Styles
@@ -5539,6 +5909,43 @@ const styles = StyleSheet.create({
     color: '#8b6914',
     marginBottom: 4,
     lineHeight: 18,
+  },
+  restrictedItemActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  removeRestrictedItemButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffebee',
+    borderWidth: 1,
+    borderColor: '#ef9a9a',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 4,
+  },
+  removeRestrictedItemText: {
+    color: '#d32f2f',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  removeAllRestrictedButton: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#d32f2f',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  removeAllRestrictedText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   branchWarningSuggestion: {
     fontSize: 13,

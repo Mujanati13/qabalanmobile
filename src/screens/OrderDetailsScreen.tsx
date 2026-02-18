@@ -520,6 +520,26 @@ const OrderDetailsScreen: React.FC<any> = ({ navigation, route }) => {
                 </Text>
               </View>
             )}
+
+            {order.order_type === 'delivery' && order.delivery_zone && (
+              <View style={[styles.detailRow, isRTL && styles.rtlRowReverse]}>
+                <Text style={[styles.detailLabel, isRTL && styles.rtlText]}>
+                  {t('orders.deliveryZone')}:
+                </Text>
+                <Text style={[
+                  styles.detailValue,
+                  isRTL && styles.rtlText,
+                  {
+                    color: order.delivery_zone === 'outside_amman' ? '#d46b08' : '#389e0d',
+                    fontWeight: '600',
+                  }
+                ]}>
+                  {order.delivery_zone === 'outside_amman'
+                    ? t('checkout.outsideAmman')
+                    : t('checkout.insideAmman')}
+                </Text>
+              </View>
+            )}
             
             {order.estimated_delivery_time && (
               <View style={[styles.detailRow, isRTL && styles.rtlRowReverse]}>

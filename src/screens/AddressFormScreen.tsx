@@ -531,13 +531,18 @@ const AddressFormScreen: React.FC<AddressFormScreenProps> = ({ navigation, route
       }
       
       // Map Google Places API (New) suggestions to our result format
+      console.log('🔍 Backend autocomplete response:', data);
       const results = data.suggestions
         .filter((suggestion: any) => suggestion.placePrediction)
-        .map((suggestion: any) => ({
-          place: suggestion.placePrediction.place,
-          text: suggestion.placePrediction.text?.text || '',
-          structuredFormat: suggestion.placePrediction.structuredFormat,
-        }));
+        .map((suggestion: any) => {
+          const result = {
+            place: suggestion.placePrediction.placeId || suggestion.placePrediction.place,
+            text: suggestion.placePrediction.text?.text || '',
+            structuredFormat: suggestion.placePrediction.structuredFormat,
+          };
+          console.log('📍 Mapped suggestion:', result);
+          return result;
+        });
       
       setMapSearchResults(results);
     } catch (error: any) {
@@ -555,6 +560,7 @@ const AddressFormScreen: React.FC<AddressFormScreenProps> = ({ navigation, route
   // Fetch place details from backend proxy to get coordinates
   const fetchPlaceDetails = async (placeId: string) => {
     try {
+      console.log('🌍 Fetching place details for:', placeId);
       const url = new URL(`${API_BASE_URL}/places/details`);
       url.searchParams.append('place_id', placeId);
       url.searchParams.append('sessionToken', autocompleteSessionToken);
@@ -562,14 +568,17 @@ const AddressFormScreen: React.FC<AddressFormScreenProps> = ({ navigation, route
       const response = await fetch(url.toString());
       
       if (!response.ok) {
-        console.error(`Place Details failed with status ${response.status}`);
+        console.error(`❌ Place Details failed with status ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Error details:', errorData);
         return null;
       }
       
       const data = await response.json();
+      console.log('📍 Place details response:', data);
       
       if (!data.location) {
-        console.error('Place Details API error: No location in response');
+        console.error('❌ Place Details API error: No location in response');
         return null;
       }
       
@@ -585,6 +594,7 @@ const AddressFormScreen: React.FC<AddressFormScreenProps> = ({ navigation, route
 
   // Handle search result selection
   const selectSearchResult = async (result: any) => {
+    console.log('🎯 Selecting search result:', result);
     // Show loading spinner while setting location on map
     setIsLoadingMapLocation(true);
     
@@ -592,6 +602,7 @@ const AddressFormScreen: React.FC<AddressFormScreenProps> = ({ navigation, route
     const location = await fetchPlaceDetails(result.place);
     
     if (!location) {
+      console.error('❌ Failed to get location details');
       setIsLoadingMapLocation(false);
       Alert.alert(
         t('common.error'),

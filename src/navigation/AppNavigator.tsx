@@ -6,9 +6,12 @@ import { useTranslation } from 'react-i18next';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
+import { useNotification } from '../contexts/NotificationContext';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { ActivityIndicator, View, StyleSheet, Text, I18nManager } from 'react-native';
+import { ActivityIndicator, View, StyleSheet, Text, I18nManager, Image, TouchableOpacity, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Colors from '../theme/colors';
+import { Spacing } from '../theme';
 
 // Import screens
 import HomeScreen from '../screens/HomeScreen';
@@ -54,10 +57,104 @@ type TabScreenConfig = {
   icon: ({ color, size, focused }: TabScreenIconProps) => React.ReactNode;
 };
 
+// Self-contained notification button — reads context itself so badge always stays in sync
+const HomeNotificationButton: React.FC<{ onPress: () => void }> = ({ onPress }) => {
+  const { unreadCount } = useNotification();
+  return (
+    <TouchableOpacity style={styles.homeNotificationButton} onPress={onPress}>
+      <Icon name="notifications-outline" size={18} color={Colors.textPrimary} />
+      {unreadCount > 0 && (
+        <View style={styles.homeNotificationBadge}>
+          <Text style={styles.homeNotificationBadgeText}>
+            {unreadCount > 99 ? '99+' : unreadCount.toString()}
+          </Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+};
+
+// Self-contained header title — renders translated text directly
+const HomeHeaderTitle: React.FC = () => {
+  const { t } = useTranslation();
+  const { currentLanguage } = useLanguage();
+  const isArabic = currentLanguage === 'ar';
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 10 }}>
+      <Text 
+        style={[
+          styles.homeHeaderTitle,
+          isArabic && { textAlign: 'right', writingDirection: 'rtl' }
+        ]} 
+        numberOfLines={1}
+      >
+        {t('navigation.home')}
+      </Text>
+    </View>
+  );
+};
+
+// Self-contained header logo — switches between arabic/english
+const HomeHeaderLogo: React.FC = () => {
+  const { currentLanguage } = useLanguage();
+  return (
+    <View style={styles.homeLogoContainer}>
+      <Image
+        source={currentLanguage === 'ar'
+          ? require('../assets/logo-arabic.png')
+          : require('../assets/logo.png')
+        }
+        style={styles.homeLogo}
+        resizeMode="contain"
+      />
+    </View>
+  );
+};
+
+// Self-contained clear cart button for CartStack header
+const CartClearButton: React.FC = () => {
+  const { t } = useTranslation();
+  const { items, clearCart } = useCart();
+  
+  if (items.length === 0) {
+    return null;
+  }
+  
+  const handleClearCart = () => {
+    Alert.alert(
+      t('cart.clearCart'),
+      t('cart.clearCartConfirm'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.confirm'),
+          style: 'destructive',
+          onPress: () => clearCart(),
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+  
+  return (
+    <TouchableOpacity 
+      onPress={handleClearCart}
+      disabled={false}
+      activeOpacity={0.7}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      style={styles.cartClearButton}
+    >
+      <Text style={styles.cartClearButtonText}>
+        {t('cart.clearCart')}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
 // Stack navigator for each tab
 const HomeStack = () => {
   const { t } = useTranslation();
-  
+
   return (
     <Stack.Navigator
       screenOptions={{
@@ -68,7 +165,16 @@ const HomeStack = () => {
       <Stack.Screen 
         name="HomeMain" 
         component={HomeScreen} 
-        options={{ title: t('navigation.home') }}
+        options={({ navigation }) => ({
+          headerTitle: () => <HomeHeaderTitle />,
+          headerLeft: () => <HomeHeaderLogo />,
+          headerRight: () => <HomeNotificationButton onPress={() => navigation.navigate('Notifications')} />,
+          headerStyle: {
+            backgroundColor: Colors.backgroundCard,
+            borderBottomWidth: 1,
+            borderBottomColor: Colors.borderLight,
+          },
+        })}
       />
       <Stack.Screen 
         name="ProductDetails" 
@@ -178,7 +284,10 @@ const CartStack = () => {
       <Stack.Screen 
         name="CartMain" 
         component={CartScreen} 
-        options={{ title: t('navigation.cart') }}
+        options={{ 
+          title: t('navigation.cart'),
+          headerRight: () => <CartClearButton />
+        }}
       />
       <Stack.Screen 
         name="Checkout" 
@@ -528,6 +637,60 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  // Home header styles
+  homeHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    textAlignVertical: 'center',
+  },
+  homeLogoContainer: {
+    paddingLeft: Spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeLogo: {
+    width: 90,
+    height: 35,
+  },
+  homeNotificationButton: {
+    position: 'relative',
+    paddingRight: Spacing.md,
+    paddingLeft: Spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  homeNotificationBadge: {
+    position: 'absolute',
+    top: 0,
+    right: Spacing.xs,
+    backgroundColor: Colors.error,
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#fff',
+  },
+  homeNotificationBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  // Cart header styles
+  cartClearButton: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cartClearButtonText: {
+    color: '#ff6b6b',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

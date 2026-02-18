@@ -34,7 +34,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
     cancelRestart,
     isRTL,
   } = useLanguage();
-  const { user, logout } = useAuth();
+  const { user, logout, isGuest } = useAuth();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -231,19 +231,21 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
       >
-        {/* Profile Section */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, isRTL && styles.rtlText]}>
-            {t('settings.profile')}
-          </Text>
-          
-          {/* Edit Profile */}
-          {renderSettingItem(
-            t('profile.editProfile'),
-            t('settings.profileEditDescription'),
-            () => navigation.navigate('EditProfile')
-          )}
-        </View>
+        {/* Profile Section - Only show for registered users, not guests */}
+        {!isGuest && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, isRTL && styles.rtlText]}>
+              {t('settings.profile')}
+            </Text>
+            
+            {/* Edit Profile */}
+            {renderSettingItem(
+              t('profile.editProfile'),
+              t('settings.profileEditDescription'),
+              () => navigation.navigate('EditProfile')
+            )}
+          </View>
+        )}
 
         {/* Language Section */}
         <View style={styles.section}>
@@ -268,17 +270,19 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-        {/* Delete Account Button */}
-        <View style={styles.dangerZone}>
-          <TouchableOpacity 
-            style={styles.deleteAccountButton} 
-            onPress={handleDeleteAccount}
-          >
-            <Text style={[styles.deleteAccountText, isRTL && styles.rtlText]}>
-              {t('settings.deleteAccount')}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {/* Delete Account Button - Only show for registered users, not guests */}
+        {!isGuest && (
+          <View style={styles.dangerZone}>
+            <TouchableOpacity 
+              style={styles.deleteAccountButton} 
+              onPress={handleDeleteAccount}
+            >
+              <Text style={[styles.deleteAccountText, isRTL && styles.rtlText]}>
+                {t('settings.deleteAccount')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
 
       {/* Delete Account Confirmation Modal */}

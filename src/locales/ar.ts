@@ -329,6 +329,7 @@ export const ar = {
       pack: 'الحزمة',
       quantity: 'الكمية',
       material: 'الخامة',
+      style: 'النمط',
     },
     variantValues: {
       small: 'صغير',
@@ -345,6 +346,7 @@ export const ar = {
     },
   chooseVariant: 'اختر المتغير',
   chooseVariants: 'اختر المتغيرات',
+  selected: 'مختار',
   selectVariantTitle: 'اختر المتغيرات',
   selectVariantMessage: 'يرجى اختيار خيار واحد على الأقل قبل الإضافة إلى السلة.',
   someVariantsUnavailable: 'بعض الخيارات المحددة غير متوفرة حالياً. يرجى إلغاء تحديدها.',
@@ -1021,6 +1023,7 @@ export const ar = {
     orderSummary: 'ملخص الطلب',
     orderType: 'نوع الطلب',
   paymentMethod: 'طريقة الدفع',
+    deliveryZone: 'منطقة التوصيل',
     orderNotFound: 'الطلب غير موجود',
     specialInstructions: 'تعليمات خاصة',
     quantity: 'الكمية',

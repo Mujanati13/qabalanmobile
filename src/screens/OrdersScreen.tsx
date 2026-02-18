@@ -49,6 +49,8 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
   const autoPayHandledRef = useRef<string | null>(null);
   const [showStatusPicker, setShowStatusPicker] = useState(false);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Prevent loadOrders from firing while the payment WebView is active
+  const isPaymentInProgressRef = useRef(false);
 
   const statusFilters = [
     { key: '', label: t('orders.allOrders') },
@@ -68,11 +70,17 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
   // 🔄 Auto-refresh orders every 30 seconds when screen is focused
   useFocusEffect(
     useCallback(() => {
-      console.log('🔄 OrdersScreen focused - refreshing orders');
-      loadOrders(true);
+      if (!isPaymentInProgressRef.current) {
+        console.log('🔄 OrdersScreen focused - refreshing orders');
+        loadOrders(true);
+      }
       
       // Start polling for order status updates every 30 seconds
       pollingIntervalRef.current = setInterval(() => {
+        if (isPaymentInProgressRef.current) {
+          console.log('⏸️ Skipping poll - payment in progress');
+          return;
+        }
         console.log('🔄 Auto-refreshing orders (polling)');
         loadOrders(true);
       }, 30000); // 30 seconds
@@ -132,6 +140,7 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
     };
 
     const openPaymentModal = (session: PaymentSession) => {
+      isPaymentInProgressRef.current = true;
       setPaymentSession(session);
       setShowPaymentModal(true);
     };
@@ -473,6 +482,7 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
 
   const handlePaymentSuccess = useCallback(
     async (orderId: string) => {
+      isPaymentInProgressRef.current = false;
       setShowPaymentModal(false);
       setPaymentSession(null);
       
@@ -515,6 +525,7 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
   );
 
   const handlePaymentCancel = useCallback((orderId: string) => {
+    isPaymentInProgressRef.current = false;
     setShowPaymentModal(false);
     setPaymentSession(null);
     if (orderId) {
@@ -936,6 +947,7 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
         visible={showPaymentModal}
         session={paymentSession}
         onClose={() => {
+          isPaymentInProgressRef.current = false;
           setShowPaymentModal(false);
           setPaymentSession(null);
         }}

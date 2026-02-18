@@ -32,7 +32,7 @@ import { formatCurrency } from '../utils/currency';
 
 const { width: screenWidth } = Dimensions.get('window');
 const BANNER_WIDTH = screenWidth - 40;
-const BANNER_HEIGHT = BANNER_WIDTH * 0.42; // slightly shorter banner
+const BANNER_HEIGHT = BANNER_WIDTH * 0.50; // Original size with moderate height
 
 interface HomeScreenProps {
   navigation: any;
@@ -419,7 +419,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           <CachedImage
             uri={bannerImage}
             style={styles.bannerImage}
-            resizeMode="cover"
+            resizeMode="contain"
             pointerEvents="none"
             showLoadingIndicator={true}
             onError={() => {
@@ -627,19 +627,19 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             </View>
           )}
           {item.is_featured && !isOutOfStock && (
-            <View style={[styles.featuredBadge, isRTL && styles.rtlFeaturedBadge]}>
+            <View style={[styles.featuredBadge, isRTL && styles.rtlFeaturedBadge]} pointerEvents="none">
               <Icon name="star" size={10} color={Colors.textWhite} />
             </View>
           )}
           {hasDiscount && !isOutOfStock && (
-            <View style={[styles.discountBadge, isRTL && styles.rtlDiscountBadge]}>
+            <View style={[styles.discountBadge, isRTL && styles.rtlDiscountBadge]} pointerEvents="none">
               <Text style={[styles.discountText, { textAlign: 'left', writingDirection: 'ltr' }]}>
                 {calculateDiscountPercentage(item.base_price || 0, item.sale_price || 0)}%
               </Text>
             </View>
           )}
           {isOutOfStock && (
-            <View style={styles.outOfStockOverlay}>
+            <View style={styles.outOfStockOverlay} pointerEvents="none">
               <Text style={[styles.outOfStockBadgeText, { textAlign: 'left', writingDirection: 'ltr' }]}>{t('products.outOfStock')}</Text>
             </View>
           )}
@@ -787,45 +787,13 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           />
         }
       >
-        {/* Modern Enhanced Header */}
-        <View style={[styles.modernHeader, isRTL && styles.rtlModernHeader]}>
-          {/* App Logo and Notification */}
-          <View style={[styles.headerTop, isRTL && styles.rtlHeaderTop]}>
-            <View style={styles.logoCorner}>
-              <Image 
-                source={currentLanguage === 'ar' 
-                  ? require('../assets/logo-arabic.png')
-                  : require('../assets/logo.png')
-                }
-                style={styles.logo}
-                resizeMode="contain"
-              />
-            </View>
-            <View style={styles.headerActions}>
-              <TouchableOpacity 
-                style={styles.notificationButton}
-                onPress={() => navigation.navigate('Notifications')}
-              >
-                <Icon name="notifications" size={24} color={Colors.textPrimary} />
-                {unreadCount > 0 && (
-                  <View style={[styles.notificationBadge, isRTL && styles.rtlNotificationBadge]}>
-                    <Text style={styles.badgeText}>
-                      {unreadCount > 99 ? '99+' : unreadCount.toString()}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-          
-          {/* Search Section */}
-          <View style={styles.modernSearchSection}>
-            <SearchBar
-              placeholder={t('home.searchProducts')}
-              value={searchQuery}
-              onChangeText={handleSearch}
-            />
-          </View>
+        {/* Search Section */}
+        <View style={[styles.searchHeaderSection, isRTL && styles.rtlSearchHeaderSection]}>
+          <SearchBar
+            placeholder={t('home.searchProducts')}
+            value={searchQuery}
+            onChangeText={handleSearch}
+          />
         </View>
             {/* Enhanced Search Results */}
             {searchQuery.trim().length > 0 && (
@@ -1326,74 +1294,18 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'center',
   },
-  logoContainerCentered: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   logo: {
-    width: 120,
-    height: 50,
+    width: 100,
+    height: 40,
   },
-  headerActionsAbsolute: {
-    position: 'absolute',
-    right: 0,
-    top: 0,
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  rtlAlignEnd: {
-    alignItems: 'flex-end',
-  },
-  appTitle: {
-    fontSize: Typography.fontSize.xl,
-    fontWeight: Typography.fontWeight.bold,
-    color: Colors.primary,
-    fontFamily: Typography.fontFamily.bold,
-  },
-  rtlAppTitle: {
-    textAlign: 'right',
-  },
-  appSubtitle: {
-    fontSize: Typography.fontSize.sm,
-    color: Colors.textSecondary,
-    marginTop: Spacing.xs,
-    fontFamily: Typography.fontFamily.regular,
-  },
-  rtlAppSubtitle: {
-    textAlign: 'right',
-  },
-  welcomeSection: {
-    flex: 1,
-  },
-  welcomeText: {
-    fontSize: Typography.fontSize['2xl'],
-    fontWeight: Typography.fontWeight.bold,
-    color: Colors.textPrimary,
-    marginBottom: Spacing.xs,
-    fontFamily: Typography.fontFamily.bold,
-  },
-  rtlWelcomeText: {
-    textAlign: 'right',
-  },
-  subWelcomeText: {
-    fontSize: Typography.fontSize.sm,
-    color: Colors.textSecondary,
-    fontFamily: Typography.fontFamily.regular,
-  },
-  rtlSubWelcomeText: {
-    textAlign: 'right',
+    gap: Spacing.md,
   },
   notificationButton: {
     position: 'relative',
     padding: Spacing.sm,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.backgroundCard,
   },
   notificationBadge: {
     position: 'absolute',
@@ -1410,38 +1322,21 @@ const styles = StyleSheet.create({
     right: undefined,
     left: 2,
   },
-  badgeText: {
-    fontSize: Typography.fontSize.xs,
-    color: Colors.textWhite,
-    fontWeight: Typography.fontWeight.bold,
-    fontFamily: Typography.fontFamily.bold,
-  },
   
-  // Modern Header Styles
-  modernHeader: {
-    backgroundColor: Colors.backgroundCard,
-    paddingTop: Spacing.lg,
+  // Search Header Section
+  searchHeaderSection: {
     paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.xl,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.lg,
     marginBottom: Spacing.md,
-    borderBottomLeftRadius: BorderRadius.xl,
-    borderBottomRightRadius: BorderRadius.xl,
-    ...Shadow.md,
   },
-  rtlModernHeader: {
+  rtlSearchHeaderSection: {
     // RTL handled by I18nManager
   },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-  },
+  
   profileButton: {
     padding: Spacing.xs,
     borderRadius: BorderRadius.full,
-  },
-  modernSearchSection: {
-    marginTop: Spacing.md,
   },
   
   // Modern Quick Actions Styles

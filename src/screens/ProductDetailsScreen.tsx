@@ -296,10 +296,19 @@ const ProductDetailsScreen: React.FC<ProductDetailsScreenProps> = ({ navigation,
   }, [variants]);
 
   const getVariantTitle = (variant: ProductVariant): string => {
-    // Use title_ar/title_en for proper multilingual support
-    return isRTL
+    // Use title_ar/title_en based on current language
+    return currentLanguage === 'ar'
       ? variant.title_ar || variant.title_en || variant.variant_value || ''
       : variant.title_en || variant.title_ar || variant.variant_value || '';
+  };
+
+  const getVariantCategoryName = (variantName: string): string => {
+    // Translate variant category names (Size, Color, etc.)
+    const lowercaseName = variantName.toLowerCase();
+    const translationKey = `products.attributes.${lowercaseName}`;
+    const translated = t(translationKey);
+    // If translation not found, return original name
+    return translated !== translationKey ? translated : variantName;
   };
 
   const getVariantDisplayPrice = (variant: ProductVariant): number => {
@@ -723,17 +732,14 @@ const ProductDetailsScreen: React.FC<ProductDetailsScreenProps> = ({ navigation,
               <View style={styles.variantsContainer}>
                 <Text style={[styles.variantTitle, { textAlign: 'left', writingDirection: 'ltr' }]}>
                   {t('products.chooseVariants') || t('products.chooseVariant') || 'Select options'} 
-                  {selectedVariants.length > 0 && ` (${selectedVariants.length} selected)`}
+                  {selectedVariants.length > 0 && ` (${selectedVariants.length} ${t('products.selected')})`}
                 </Text>
                 
                 {Object.entries(variantsByCategory).map(([categoryName, categoryVariants]) => (
                   <View key={categoryName} style={styles.variantCategoryContainer}>
                     {/* Category Title */}
                     <Text style={[styles.variantCategoryTitle, { textAlign: 'left', writingDirection: 'ltr' }]}>
-                      {isRTL && currentLanguage === 'ar' 
-                        ? (categoryVariants[0]?.variant_name || categoryName)
-                        : categoryName
-                      }
+                      {getVariantCategoryName(categoryName)}
                     </Text>
                     
                     {/* Variants in this category */}

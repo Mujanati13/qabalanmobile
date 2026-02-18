@@ -243,6 +243,7 @@ interface CreateOrderData {
   delivery_address_id?: number;
   branch_id?: number;
   is_guest?: boolean;
+  delivery_zone?: 'inside_amman' | 'outside_amman' | null;
   guest_delivery_address?: string | {
     address?: string;
     latitude?: number;

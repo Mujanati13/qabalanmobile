@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,7 +16,10 @@ import {
   Platform,
   StatusBar,
   I18nManager,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useCart } from '../contexts/CartContext';
@@ -37,9 +40,10 @@ interface CartScreenProps {
 const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   const { t } = useTranslation();
   const { currentLanguage } = useLanguage();
+  const isArabic = currentLanguage === 'ar';
   const isRTL = false; // Override to force LTR
   const { user, isGuest, logout } = useAuth();
-  const { items, itemCount, totalAmount, updateQuantity, removeFromCart, clearCart } = useCart();
+  const { items, itemCount, totalAmount, updateQuantity, removeFromCart, clearCart, refreshCartProducts } = useCart();
   const [loading, setLoading] = useState(false);
   const [animatingItems, setAnimatingItems] = useState<Set<string>>(new Set());
   const [storeStatus, setStoreStatus] = useState<{ accepting_orders: boolean; message_en: string; message_ar: string } | null>(null);
@@ -47,22 +51,124 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   
   const slideAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
+  // Check store status function
+  const checkStoreStatus = useCallback(async () => {
+    try {
+      console.log('[CartScreen] Checking store status...');
+      const response = await apiService.checkStoreStatus();
+      console.log('[CartScreen] Store status response:', JSON.stringify(response, null, 2));
+      if (response.success && response.data) {
+        console.log('[CartScreen] Setting store status:', response.data.accepting_orders ? 'OPEN' : 'CLOSED');
+        setStoreStatus(response.data);
+      } else {
+        console.warn('[CartScreen] Store status check failed or no data');
+      }
+    } catch (error) {
+      console.error('[CartScreen] Failed to check store status:', error);
+    }
+  }, []);
 
   // Check store status on mount
   useEffect(() => {
-    const checkStoreStatus = async () => {
-      try {
-        const response = await apiService.checkStoreStatus();
-        if (response.success && response.data) {
-          setStoreStatus(response.data);
-        }
-      } catch (error) {
-        console.error('Failed to check store status:', error);
-      }
-    };
-    
     checkStoreStatus();
-  }, []);
+  }, [checkStoreStatus]);
+
+  // Debug: Monitor storeStatus changes
+  useEffect(() => {
+    if (storeStatus) {
+      console.log('[CartScreen] storeStatus updated:', {
+        accepting_orders: storeStatus.accepting_orders,
+        message_en: storeStatus.message_en,
+        message_ar: storeStatus.message_ar
+      });
+    }
+  }, [storeStatus]);
+
+  // Use a ref to track items for callbacks, so we don't need items in dependencies
+  const itemsRef = useRef(items);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  // Listen for app state changes and refresh store status when app becomes active
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      console.log(`[CartScreen] AppState changed from ${appStateRef.current} to ${nextAppState}`);
+      if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+        // App has come to foreground, check store status
+        console.log('[CartScreen] App became active, checking store status...');
+        checkStoreStatus();
+        
+        // Only refresh products if cart has items (use ref for current value)
+        if (itemsRef.current && itemsRef.current.length > 0) {
+          console.log('[CartScreen] Cart has items, refreshing products...');
+          refreshCartProducts();
+        } else {
+          console.log('[CartScreen] Cart is empty, skipping product refresh');
+        }
+      }
+      appStateRef.current = nextAppState;
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+
+    return () => {
+      subscription.remove();
+    };
+  }, [checkStoreStatus, refreshCartProducts]);
+
+  // Refresh store status whenever this screen comes into focus
+  // NOTE: Do NOT call refreshCartProducts here - it causes an infinite loop
+  // because refreshCartProducts dispatches SET_CART which updates items state
+  // which causes useFocusEffect to re-run if refreshCartProducts is in deps.
+  useFocusEffect(
+    useCallback(() => {
+      console.log('[CartScreen] Screen focused, checking store status...');
+      checkStoreStatus();
+    }, [checkStoreStatus])
+  );
+
+  // Refresh cart products ONCE on mount only
+  useEffect(() => {
+    if (itemsRef.current && itemsRef.current.length > 0) {
+      console.log('[CartScreen] Mount: refreshing cart products once...');
+      refreshCartProducts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty - run only on mount
+
+  // Check for Amman-only delivery items
+  const ammanOnlyItems = useMemo(() => {
+    const restricted = items.filter(item => item.product?.amman_only_delivery === 1);
+    if (restricted.length === 0) return null;
+
+    const grouped = new Map<string, { name: string; quantity: number }>();
+    for (const item of restricted) {
+      const productName = isArabic
+        ? (item.product?.title_ar || item.product?.title_en)
+        : (item.product?.title_en || item.product?.title_ar);
+      const name = (productName || 'Unknown Product').trim();
+      const quantity = Number(item.quantity) || 1;
+
+      const existing = grouped.get(name);
+      if (existing) {
+        existing.quantity += quantity;
+      } else {
+        grouped.set(name, { name, quantity });
+      }
+    }
+
+    const normalizedItems = Array.from(grouped.values());
+    const visibleItems = normalizedItems.slice(0, 4);
+
+    return {
+      count: restricted.length,
+      items: visibleItems,
+      hiddenCount: Math.max(0, normalizedItems.length - visibleItems.length),
+    };
+  }, [items, isArabic]);
 
   useEffect(() => {
     Animated.parallel([
@@ -80,6 +186,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   }, []);
 
   const AnimatedCartItem = ({ item, index }: { item: any; index: number }) => {
+    console.log('[CartScreen] AnimatedCartItem rendering:', item.product_id, 'index:', index);
     const itemFadeAnim = useRef(new Animated.Value(1)).current;
     const itemSlideAnim = useRef(new Animated.Value(0)).current;
     const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -115,11 +222,19 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
     };
 
     const handleRemove = () => {
-      const itemKey = `${item.product_id}-${item.variant_id || 'default'}`;
+      console.log('[CartScreen] Remove button pressed for product:', item.product_id);
+      // Generate unique key including variants
+      const variantsKey = item.variants && item.variants.length > 0
+        ? item.variants.map((v: any) => v.id).sort().join('-')
+        : (item.variant_id || 'default');
+      const itemKey = `${item.product_id}-${variantsKey}`;
+      console.log('[CartScreen] Animating removal for item:', itemKey);
       setAnimatingItems(prev => new Set([...prev, itemKey]));
       animateRemove();
       setTimeout(() => {
-        removeFromCart(item.product_id, item.variant_id);
+        console.log('[CartScreen] Calling removeFromCart for:', item.product_id, item.variant_id);
+        removeFromCart(item.product_id, item.variant_id, item.variants);
+        console.log('[CartScreen] removeFromCart() called');
         setAnimatingItems(prev => {
           const newSet = new Set(prev);
           newSet.delete(itemKey);
@@ -134,7 +249,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
         return;
       }
       animateQuantityChange();
-      updateQuantity(item.product_id, newQuantity, item.variant_id);
+      updateQuantity(item.product_id, newQuantity, item.variant_id, item.variants);
     };
 
     const product = item.product;
@@ -562,8 +677,14 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
 
           <TouchableOpacity
             style={[styles.removeButton, isRTL && styles.rtlRemoveButton]}
-            onPress={handleRemove}
-            disabled={loading}
+            onPress={() => {
+              console.log('[CartScreen] 🗑️ TRASH BUTTON PRESSED - TouchableOpacity onPress fired!');
+              console.log('[CartScreen] Item to remove:', { product_id: item.product_id, variant_id: item.variant_id });
+              handleRemove();
+            }}
+            disabled={false}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Icon name="trash-outline" size={22} color="#ff6b6b" />
           </TouchableOpacity>
@@ -578,46 +699,6 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
 
   const discount = calculateDiscount();
   const finalTotal = Math.max(totalAmount, 0); // Delivery fee will be calculated during checkout
-
-  const handleQuantityChange = (productId: number, newQuantity: number, variantId?: number) => {
-    if (newQuantity < 1) {
-      handleRemoveItem(productId, variantId);
-      return;
-    }
-    updateQuantity(productId, newQuantity, variantId);
-  };
-
-  const handleRemoveItem = (productId: number, variantId?: number) => {
-    Alert.alert(
-      t('cart.removeItem'),
-      t('cart.removeItemConfirm'),
-      [
-        { text: t('common.cancel'), style: 'cancel' },
-        { 
-          text: t('common.delete'), 
-          style: 'destructive',
-          onPress: () => removeFromCart(productId, variantId)
-        }
-      ]
-    );
-  };
-
-  const handleClearCart = () => {
-    Alert.alert(
-      t('cart.clearCart'),
-      t('cart.clearCartConfirm'),
-      [
-        { text: t('common.cancel'), style: 'cancel' },
-        { 
-          text: t('common.confirm'), 
-          style: 'destructive',
-          onPress: () => {
-            clearCart();
-          }
-        }
-      ]
-    );
-  };
 
   const handleCheckout = () => {
     if (!user && !isGuest) {
@@ -666,21 +747,6 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   return (
     <SafeAreaView style={[styles.container, isRTL && styles.rtlContainer]}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
-      
-      <Animated.View style={[styles.header, { opacity: fadeAnim }]}>
-        <View style={[styles.headerContent, isRTL && styles.rtlHeader]}>
-          <Text style={[styles.title, { textAlign: 'left', writingDirection: 'ltr' }]}>
-            {t('cart.title')} ({itemCount})
-          </Text>
-          {items.length > 0 && (
-            <TouchableOpacity onPress={handleClearCart} disabled={loading}>
-              <Text style={[styles.clearButton, { textAlign: 'left', writingDirection: 'ltr' }]}>
-                {t('cart.clearCart')}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </Animated.View>
 
       {items.length === 0 ? (
         <Animated.View style={[styles.emptyContainer, { opacity: fadeAnim }]}>
@@ -758,6 +824,47 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
               </View>
             </View>
 
+            {/* Amman-only Delivery Restriction Warning */}
+            {ammanOnlyItems && (
+              <View style={styles.ammanOnlyWarningBanner}>
+                <View style={[styles.ammanOnlyWarningHeader, isRTL && {flexDirection: 'row-reverse'}]}>
+                  <Icon name="alert-circle" size={20} color="#ff9500" style={{ marginRight: isRTL ? 0 : 8, marginLeft: isRTL ? 8 : 0 }} />
+                  <Text style={[styles.ammanOnlyWarningTitle, isArabic && styles.rtlWarningText]}>
+                    {t('checkout.ammanOnlyRestrictionTitle')}
+                  </Text>
+                </View>
+                <Text style={[styles.ammanOnlyWarningText, isArabic && styles.rtlWarningText]}>
+                  {t('checkout.ammanOnlyRestrictionMessage')}
+                </Text>
+                <Text style={[styles.ammanOnlyWarningCount, isArabic && styles.rtlWarningText]}>
+                  {t('checkout.ammanOnlyRestrictionSummary', {
+                    count: ammanOnlyItems.count,
+                    count_label: ammanOnlyItems.count === 1 ? t('checkout.item') || 'item' : t('checkout.items') || 'items'
+                  })}
+                </Text>
+                <Text style={[styles.ammanOnlyItemsLabel, isArabic && styles.rtlWarningText]}>
+                  {t('checkout.ammanOnlyItems')}
+                </Text>
+                <View style={styles.ammanOnlyList}>
+                  {ammanOnlyItems.items.map((item, index) => (
+                    <View key={`${item.name}-${index}`} style={[styles.ammanOnlyItemRow, isArabic && styles.ammanOnlyItemRowRtl]}>
+                      <Text style={[styles.ammanOnlyBullet, isArabic && styles.ammanOnlyBulletRtl]}>•</Text>
+                      <Text style={[styles.ammanOnlyItemName, isArabic && styles.rtlWarningText]}>
+                        {item.quantity > 1 ? `${item.name} ×${item.quantity}` : item.name}
+                      </Text>
+                    </View>
+                  ))}
+                  {ammanOnlyItems.hiddenCount > 0 && (
+                    <Text style={[styles.ammanOnlyMoreText, isArabic && styles.rtlWarningText]}>
+                      {isArabic
+                        ? `+${ammanOnlyItems.hiddenCount} منتجات أخرى`
+                        : `+${ammanOnlyItems.hiddenCount} more items`}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            )}
+
             {/* Store Status Warning */}
             {storeStatus && !storeStatus.accepting_orders && (
               <View style={styles.storeClosedBanner}>
@@ -811,47 +918,6 @@ const styles = StyleSheet.create({
   },
   rtlContainer: {
     // RTL handled by I18nManager
-  },
-  header: {
-    backgroundColor: '#fff',
-    paddingBottom: 10,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
-  },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-  },
-  rtlHeader: {
-    flexDirection: 'row-reverse',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1a1a1a',
-  },
-  rtlTitle: {
-    textAlign: 'right',
-  },
-  rtlText: {
-    textAlign: 'right',
-  },
-  clearButton: {
-    color: '#ff6b6b',
-    fontSize: 16,
-    fontWeight: '600',
   },
   loadingContainer: {
     flex: 1,
@@ -1211,6 +1277,83 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#007AFF',
+  },
+  ammanOnlyWarningBanner: {
+    backgroundColor: '#fff8e1',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff9500',
+  },
+  rtlWarningText: {
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
+  ammanOnlyWarningHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  ammanOnlyWarningTitle: {
+    fontSize: 14,
+    color: '#e65100',
+    fontWeight: '700',
+    flex: 1,
+  },
+  ammanOnlyWarningText: {
+    fontSize: 13,
+    color: '#8a6d3b',
+    lineHeight: 18,
+  },
+  ammanOnlyWarningCount: {
+    fontSize: 13,
+    color: '#8a6d3b',
+    fontWeight: '600',
+    marginTop: 6,
+  },
+  ammanOnlyItemsLabel: {
+    fontSize: 13,
+    color: '#8a6d3b',
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  ammanOnlyList: {
+    marginTop: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  ammanOnlyItemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 4,
+  },
+  ammanOnlyItemRowRtl: {
+    flexDirection: 'row-reverse',
+  },
+  ammanOnlyBullet: {
+    fontSize: 13,
+    color: '#8a6d3b',
+    marginRight: 6,
+    marginTop: 1,
+  },
+  ammanOnlyBulletRtl: {
+    marginRight: 0,
+    marginLeft: 6,
+  },
+  ammanOnlyItemName: {
+    fontSize: 13,
+    color: '#8a6d3b',
+    flex: 1,
+    lineHeight: 18,
+  },
+  ammanOnlyMoreText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#7a5c2f',
+    fontWeight: '600',
   },
   storeClosedBanner: {
     backgroundColor: '#ffebee',

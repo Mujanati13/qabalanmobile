@@ -16,7 +16,18 @@ export const AuthCartSync: React.FC<AuthCartSyncProps> = ({ children }) => {
   });
 
   useEffect(() => {
-    if (!isLoading && (!lastSyncState.current.synced || lastSyncState.current.isGuest !== isGuest)) {
+    console.log('[AuthCartSync] Effect triggered - isGuest:', isGuest, 'isLoading:', isLoading, 'lastSync:', lastSyncState.current);
+    
+    if (isLoading) {
+      console.log('[AuthCartSync] Still loading, skipping sync');
+      return;
+    }
+    
+    // Only sync if this is the first sync OR if guest status actually changed
+    const needsSync = !lastSyncState.current.synced || lastSyncState.current.isGuest !== isGuest;
+    
+    if (needsSync) {
+      console.log('[AuthCartSync] Guest status changed, syncing cart mode...');
       if (isGuest) {
         console.log('🛒 Switching to guest cart mode');
         switchToGuestMode();
@@ -26,6 +37,8 @@ export const AuthCartSync: React.FC<AuthCartSyncProps> = ({ children }) => {
       }
       
       lastSyncState.current = { isGuest, synced: true };
+    } else {
+      console.log('[AuthCartSync] No sync needed');
     }
   }, [isGuest, isLoading]);
 
