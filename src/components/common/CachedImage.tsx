@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback, memo } from 'react';
 import {
   Image,
   ImageProps,
@@ -8,7 +8,6 @@ import {
   ImageStyle,
   ViewStyle,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface CachedImageProps extends Omit<ImageProps, 'source'> {
   uri: string;
@@ -25,10 +24,12 @@ interface CachedImageProps extends Omit<ImageProps, 'source'> {
   pointerEvents?: 'auto' | 'none' | 'box-none' | 'box-only' | undefined;
 }
 
-const CACHE_PREFIX = '@image_cache:';
-const CACHE_EXPIRY_DAYS = 7; // Cache images for 7 days
+// React Native's Image component already handles HTTP caching natively on both platforms.
+// On iOS, NSURLCache handles disk/memory caching automatically.
+// On Android, OkHttp handles HTTP caching automatically.
+// No need for AsyncStorage-based metadata tracking — it only added overhead.
 
-const CachedImage: React.FC<CachedImageProps> = ({
+const CachedImage: React.FC<CachedImageProps> = memo(({
   uri,
   style,
   containerStyle,
@@ -45,83 +46,23 @@ const CachedImage: React.FC<CachedImageProps> = ({
 }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [cachedUri, setCachedUri] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (uri && cacheEnabled) {
-      loadImage();
-    } else if (uri) {
-      setCachedUri(uri);
-    }
-  }, [uri, cacheEnabled]);
-
-  const getCacheKey = (imageUri: string): string => {
-    return `${CACHE_PREFIX}${imageUri}`;
-  };
-
-  const isCacheExpired = (timestamp: number): boolean => {
-    const expiryTime = CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
-    return Date.now() - timestamp > expiryTime;
-  };
-
-  const loadImage = async () => {
-    if (!uri) {
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const cacheKey = getCacheKey(uri);
-      const cachedData = await AsyncStorage.getItem(cacheKey);
-
-      if (cachedData) {
-        const { cachedUri: storedUri, timestamp } = JSON.parse(cachedData);
-        
-        // Check if cache is expired
-        if (!isCacheExpired(timestamp)) {
-          setCachedUri(storedUri);
-          setLoading(false);
-          onLoadEnd?.();
-          return;
-        } else {
-          // Remove expired cache
-          await AsyncStorage.removeItem(cacheKey);
-        }
-      }
-
-      // If no valid cache, use the original URI and cache the metadata
-      setCachedUri(uri);
-      
-      // Store cache metadata (we're not downloading and storing the actual image data
-      // to avoid excessive storage usage, just tracking successful loads)
-      const cacheData = {
-        cachedUri: uri,
-        timestamp: Date.now(),
-      };
-      await AsyncStorage.setItem(cacheKey, JSON.stringify(cacheData));
-    } catch (error) {
-      console.warn('Cache loading error:', error);
-      // Fallback to direct URI on cache error
-      setCachedUri(uri);
-    }
-  };
-
-  const handleLoadStart = () => {
+  const handleLoadStart = useCallback(() => {
     setLoading(true);
     setError(false);
     onLoadStart?.();
-  };
+  }, [onLoadStart]);
 
-  const handleLoadEnd = () => {
+  const handleLoadEnd = useCallback(() => {
     setLoading(false);
     onLoadEnd?.();
-  };
+  }, [onLoadEnd]);
 
-  const handleError = () => {
+  const handleError = useCallback(() => {
     setLoading(false);
     setError(true);
     onError?.();
-  };
+  }, [onError]);
 
   if (!uri) {
     return fallbackComponent ? <View style={containerStyle}>{fallbackComponent}</View> : null;
@@ -133,16 +74,15 @@ const CachedImage: React.FC<CachedImageProps> = ({
 
   return (
     <View style={[styles.container, containerStyle]} pointerEvents={pointerEvents || 'auto'}>
-      {cachedUri && (
-        <Image
-          {...imageProps}
-          source={{ uri: cachedUri }}
-          style={style}
-          onLoadStart={handleLoadStart}
-          onLoadEnd={handleLoadEnd}
-          onError={handleError}
-        />
-      )}
+      <Image
+        {...imageProps}
+        source={{ uri, cache: 'default' }}
+        style={style}
+        onLoadStart={handleLoadStart}
+        onLoadEnd={handleLoadEnd}
+        onError={handleError}
+        progressiveRenderingEnabled={true}
+      />
       {loading && showLoadingIndicator && (
         <View style={styles.loadingOverlay} pointerEvents="none">
           <ActivityIndicator 
@@ -153,7 +93,9 @@ const CachedImage: React.FC<CachedImageProps> = ({
       )}
     </View>
   );
-};
+});
+
+CachedImage.displayName = 'CachedImage';
 
 const styles = StyleSheet.create({
   container: {

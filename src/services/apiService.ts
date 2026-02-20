@@ -754,16 +754,24 @@ class ApiService {
     return this.getAccessToken();
   }
 
-  getImageUrl(imageUrl: string): string {
+  getImageUrl(imageUrl: string, type: string = 'products'): string {
     if (!imageUrl) return '';
-    
-    // If it's already a full URL, return as is
-    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-      return imageUrl;
-    }
     
     // Check if it's a data URL (base64)
     if (imageUrl.startsWith('data:')) {
+      return imageUrl;
+    }
+
+    // If it's a full URL, extract the /api/uploads/... path and rebuild with
+    // the current production base URL. This fixes images uploaded from a dev
+    // environment where a local hostname (e.g. 192.168.x.x or localhost) was
+    // embedded in the stored URL.
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+      const match = imageUrl.match(/\/api\/uploads\/(.+)$/);
+      if (match) {
+        return `${API_BASE_URL}/uploads/${match[1]}`;
+      }
+      // Not an uploads URL (e.g. an external CDN link) — return as-is
       return imageUrl;
     }
     
@@ -777,8 +785,8 @@ class ApiService {
       return `${API_BASE_URL}/uploads/${pathWithoutUploads}`;
     }
     
-    // For products without uploads path, add it
-    return `${API_BASE_URL}/uploads/products/${cleanUrl}`;
+    // Bare filename — use the provided type folder
+    return `${API_BASE_URL}/uploads/${type}/${cleanUrl}`;
   }
 
   async getCurrentUser(): Promise<User | null> {

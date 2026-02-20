@@ -56,9 +56,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   
   // Sync with context language changes
   useEffect(() => {
-    console.log('[HomeScreen] Language changed:', currentLanguage, 'isArabic:', isArabic);
-    console.log('[HomeScreen] Setting textAlign to:', textAlign, 'textDirection:', textDirection);
-    console.log('[HomeScreen] Setting textDirection to: ltr (always)');
     setLanguage(currentLanguage);
   }, [currentLanguage]);
 
@@ -74,7 +71,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
+  const failedImagesRef = useRef<Set<string>>(new Set());
   const [offersError, setOffersError] = useState<string>('');
 
   // Auto-slide refs and state
@@ -125,7 +122,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       }
 
       if (offersRes.success && offersRes.data && Array.isArray(offersRes.data)) {
-        console.log('✅ Featured offers loaded:', offersRes.data.length, 'items');
         setFeaturedOffers(offersRes.data);
         setOffersError('');
       } else {
@@ -334,7 +330,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const handleBannerPress = (item: Category) => {
     const title = currentLanguage === 'ar' ? (item.title_ar || item.title_en || '') : (item.title_en || item.title_ar || '');
     try {
-      console.log('[HomeScreen] Banner pressed:', item.id, title);
       navigation.navigate('Products', { 
         categoryId: item.id, 
         categoryName: title || 'Category'
@@ -352,7 +347,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const handleCategoryPress = (item: Category) => {
     const title = currentLanguage === 'ar' ? (item.title_ar || item.title_en || '') : (item.title_en || item.title_ar || '');
     try {
-      console.log('[HomeScreen] Category pressed:', item.id, title);
       navigation.navigate('Products', { 
         categoryId: item.id, 
         categoryName: title || 'Category'
@@ -370,7 +364,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const handleProductPress = (item: Product) => {
     const title = currentLanguage === 'ar' ? (item.title_ar || item.title_en || '') : (item.title_en || item.title_ar || '');
     try {
-      console.log('[HomeScreen] Product pressed:', item.id, title);
       navigation.navigate('ProductDetails', { productId: item.id });
     } catch (error) {
       console.error('[HomeScreen] Product navigation error:', error);
@@ -384,7 +377,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
   const handleOfferPressAction = (offer: Offer) => {
     try {
-      console.log('[HomeScreen] Offer pressed:', offer.id);
       navigation.navigate('Offers');
     } catch (error) {
       console.error('[HomeScreen] Offer navigation error:', error);
@@ -400,11 +392,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const renderBannerItem = useCallback(({ item, index }: { item: Category; index: number }) => {
     if (!item || typeof item !== 'object') return null;
     
-    const bannerImage = item.banner_mobile || item.banner_image || item.image;
+    const rawBannerImage = item.banner_mobile || item.banner_image || item.image;
+    const bannerImage = rawBannerImage ? ApiService.getImageUrl(rawBannerImage, 'categories') : '';
     // Use currentLanguage instead of isRTL to determine which text to show
     const title = currentLanguage === 'ar' ? (item.title_ar || item.title_en || '') : (item.title_en || item.title_ar || '');
-    
-    console.log('[HomeScreen] renderBannerItem - language:', language, 'textAlign:', textAlign, 'textDirection:', textDirection, 'title:', title);
 
     return (
       <TouchableOpacity
@@ -415,7 +406,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         delayPressOut={0}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
-        {bannerImage && !failedImages.has(`banner-${item.id}`) ? (
+        {bannerImage && !failedImagesRef.current.has(`banner-${item.id}`) ? (
           <CachedImage
             uri={bannerImage}
             style={styles.bannerImage}
@@ -423,7 +414,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             pointerEvents="none"
             showLoadingIndicator={true}
             onError={() => {
-              setFailedImages(prev => new Set(prev).add(`banner-${item.id}`));
+              failedImagesRef.current.add(`banner-${item.id}`);
             }}
             fallbackComponent={
               <View style={[styles.bannerImage, styles.bannerIconFallback]}>
@@ -448,7 +439,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         </View>
       </TouchableOpacity>
     );
-  }, [isRTL, t, failedImages, navigation, textDirection, currentLanguage]);
+  }, [t, currentLanguage]);
 
   const renderCategoryItem = useCallback(({ item }: { item: Category }) => {
     if (!item || typeof item !== 'object') return null;
@@ -466,16 +457,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
         <View style={styles.categoryImageContainer} pointerEvents="box-none">
-          {item.image && !failedImages.has(`category-${item.id}`) ? (
+          {item.image && !failedImagesRef.current.has(`category-${item.id}`) ? (
             <CachedImage
-              uri={item.image}
+              uri={ApiService.getImageUrl(item.image, 'categories')}
               style={styles.categoryImage}
               resizeMode="cover"
               pointerEvents="none"
               showLoadingIndicator={true}
               loadingIndicatorSize="small"
               onError={() => {
-                setFailedImages(prev => new Set(prev).add(`category-${item.id}`));
+                failedImagesRef.current.add(`category-${item.id}`);
               }}
               fallbackComponent={
                 <View style={[styles.categoryImage, styles.categoryIconFallback]}>
@@ -499,7 +490,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         )}
       </TouchableOpacity>
     );
-  }, [isRTL, t, failedImages, navigation, textDirection, currentLanguage]);
+  }, [t, currentLanguage]);
 
   const renderProductItem = useCallback(({ item }: { item: Product }) => {
     if (!item || typeof item !== 'object') return null;
@@ -521,7 +512,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
         <View style={styles.productImageContainer} pointerEvents="box-none">
-          {item.main_image && !failedImages.has(`product-${item.id}`) ? (
+          {item.main_image && !failedImagesRef.current.has(`product-${item.id}`) ? (
             <CachedImage
               uri={ApiService.getImageUrl(item.main_image)}
               style={styles.productImage}
@@ -530,7 +521,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               showLoadingIndicator={true}
               loadingIndicatorSize="small"
               onError={() => {
-                setFailedImages(prev => new Set(prev).add(`product-${item.id}`));
+                failedImagesRef.current.add(`product-${item.id}`);
               }}
               fallbackComponent={
                 <View style={[styles.productImage, styles.productIconFallback]}>
@@ -588,7 +579,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           </View>
       </TouchableOpacity>
     );
-  }, [isRTL, t, failedImages, navigation, calculateDiscountPercentage, parsePrice, textDirection, currentLanguage]);
+  }, [t, currentLanguage]);
 
   const renderGridProductItem = useCallback(({ item, index }: { item: Product; index: number }) => {
     if (!item || typeof item !== 'object') return null;
@@ -605,7 +596,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         activeOpacity={0.7}
       >
         <View style={styles.gridProductImageContainer}>
-          {item.main_image && !failedImages.has(`product-${item.id}`) ? (
+          {item.main_image && !failedImagesRef.current.has(`product-${item.id}`) ? (
             <CachedImage
               uri={ApiService.getImageUrl(item.main_image)}
               style={styles.gridProductImage}
@@ -613,7 +604,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               showLoadingIndicator={true}
               loadingIndicatorSize="small"
               onError={() => {
-                setFailedImages(prev => new Set(prev).add(`product-${item.id}`));
+                failedImagesRef.current.add(`product-${item.id}`);
               }}
               fallbackComponent={
                 <View style={[styles.gridProductImage, styles.productIconFallback]}>
@@ -663,7 +654,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         </View>
       </TouchableOpacity>
     );
-  }, [isRTL, t, failedImages, currentLanguage, calculateDiscountPercentage, parsePrice]);
+  }, [t, currentLanguage]);
 
   const renderOfferCard = useCallback(({ item }: { item: Offer }) => {
     if (!item || typeof item !== 'object') return null;
@@ -689,7 +680,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         delayPressOut={0}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
-        {imageSource && !failedImages.has(imageKey) ? (
+        {imageSource && !failedImagesRef.current.has(imageKey) ? (
           <CachedImage
             uri={ApiService.getImageUrl(imageSource)}
             style={styles.offerImage}
@@ -698,7 +689,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             showLoadingIndicator={true}
             loadingIndicatorSize="small"
             onError={() => {
-              setFailedImages((prev) => new Set(prev).add(imageKey));
+              failedImagesRef.current.add(imageKey);
             }}
             fallbackComponent={
               <View style={[styles.offerImage, styles.offerImageFallback]}>
@@ -739,7 +730,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         </View>
       </TouchableOpacity>
     );
-  }, [isRTL, t, failedImages, textDirection, currentLanguage]);
+  }, [t, currentLanguage]);
 
   // Memoized key extractor for offers
   const offerKeyExtractor = useCallback((item: Offer, index: number) => {
@@ -834,7 +825,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 showsHorizontalScrollIndicator={false}
                 scrollEventThrottle={16}
                 contentContainerStyle={styles.modernProductsList}
-                removeClippedSubviews={false}
+                removeClippedSubviews={true}
                 nestedScrollEnabled={true}
                 maxToRenderPerBatch={4}
                 windowSize={6}
@@ -871,7 +862,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               snapToInterval={BANNER_WIDTH + 20}
               decelerationRate="fast"
               contentContainerStyle={styles.modernBannerList}
-              removeClippedSubviews={false}
+              removeClippedSubviews={true}
               maxToRenderPerBatch={3}
               windowSize={5}
               extraData={currentLanguage}
@@ -886,7 +877,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 resetAutoSlide();
               }}
               onScrollToIndexFailed={(info) => {
-                console.log('Scroll to index failed:', info);
+                // Scroll to index failed, retry quietly
                 setTimeout(() => {
                   if (bannerFlatListRef.current && info.index < banners.length) {
                     bannerFlatListRef.current.scrollToIndex({
@@ -958,7 +949,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 showsHorizontalScrollIndicator={false}
                 scrollEventThrottle={16}
                 contentContainerStyle={[styles.offersList, isRTL && styles.rtlList]}
-                removeClippedSubviews={false}
+                removeClippedSubviews={true}
                 nestedScrollEnabled={true}
                 maxToRenderPerBatch={3}
                 updateCellsBatchingPeriod={50}
@@ -997,7 +988,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               keyExtractor={categoryKeyExtractor}
               horizontal
               showsHorizontalScrollIndicator={false}
-              removeClippedSubviews={false}
+              removeClippedSubviews={true}
               nestedScrollEnabled={true}
               maxToRenderPerBatch={8}
               windowSize={10}
@@ -1042,7 +1033,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               keyExtractor={productKeyExtractor}
               horizontal
               showsHorizontalScrollIndicator={false}
-              removeClippedSubviews={false}
+              removeClippedSubviews={true}
               nestedScrollEnabled={true}
               maxToRenderPerBatch={4}
               windowSize={6}
@@ -1088,7 +1079,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 scrollEventThrottle={16}
-                removeClippedSubviews={false}
+                removeClippedSubviews={true}
                 nestedScrollEnabled={true}
                 maxToRenderPerBatch={4}
                 windowSize={6}
@@ -1134,7 +1125,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               showsHorizontalScrollIndicator={false}
               scrollEventThrottle={16}
               contentContainerStyle={[styles.modernProductsList, isRTL && styles.rtlList]}
-              removeClippedSubviews={false}
+              removeClippedSubviews={true}
               nestedScrollEnabled={true}
               maxToRenderPerBatch={4}
               windowSize={6}
