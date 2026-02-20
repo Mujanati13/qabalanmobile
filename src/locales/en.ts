@@ -14,6 +14,7 @@ export const en = {
     save: 'Save',
     delete: 'Delete',
     edit: 'Edit',
+    clear: 'Clear',
     info: 'Info',
     items: 'Items',
     retry: 'Retry',
@@ -844,6 +845,7 @@ export const en = {
       delivered: 'Delivered',
       cancelled: 'Cancelled',
       receipt_confirmed: 'Receipt Confirmed',
+      order_edited: 'Order Edited',
     },
     paymentMethods: {
       cash: 'Cash on Delivery',
@@ -1037,6 +1039,7 @@ export const en = {
     readyToPlaceOrder: 'Ready to place order!',
     // Free shipping text
     freeShippingRemovedForPickup: 'Free delivery promos are only available for delivery orders. We removed the code for pickup.',
+    freeShippingRemovedForOutsideAmman: 'Free delivery promos are not available for outside Amman orders. Promo code removed.',
     branchStockUnavailable: 'Some items aren\'t available at the selected branch. Please adjust your cart or choose another branch.',
     ammanOnlyRestrictionTitle: 'Special Delivery Area',
     ammanOnlyRestrictionMessage: 'Some items are only available for delivery inside Amman.',

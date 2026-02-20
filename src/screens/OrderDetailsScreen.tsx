@@ -178,6 +178,8 @@ const OrderDetailsScreen: React.FC<any> = ({ navigation, route }) => {
         return '#e74c3c';
       case 'receipt_confirmed':
         return '#1abc9c';
+      case 'order_edited':
+        return '#5b6cf6';
       default:
         return '#95a5a6';
     }
@@ -201,6 +203,8 @@ const OrderDetailsScreen: React.FC<any> = ({ navigation, route }) => {
         return 'close-circle-outline';
       case 'receipt_confirmed':
         return 'thumbs-up-outline';
+      case 'order_edited':
+        return 'create-outline';
       default:
         return 'ellipse-outline';
     }

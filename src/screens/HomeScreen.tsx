@@ -1295,8 +1295,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logo: {
-    width: 100,
-    height: 40,
+    width: 140,
+    height: 56,
   },
   headerActions: {
     flexDirection: 'row',

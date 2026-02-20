@@ -291,6 +291,9 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   // Always-current ref for selectedBranchId so calculateOrder doesn't capture a stale closure
   const selectedBranchIdRef = useRef<number | null>(selectedBranchId ?? null);
+  // Tracks whether the user explicitly picked a branch from the modal.
+  // When false, nearest-branch auto-selection is allowed to override the current value.
+  const userManuallySelectedBranchRef = useRef(false);
   // Prevent AppState / focus callbacks from refreshing while payment WebView is open
   const isPaymentInProgressRef = useRef(false);
 
@@ -1333,7 +1336,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
   useEffect(() => {
     calculateOrder();
-  }, [selectedAddress, orderType, appliedPromo]);
+  }, [selectedAddress, orderType, appliedPromo, deliveryZone]);
 
   // 🔄 SOLUTION: Recalculate when cart items change (variant selection, quantity, etc.)
   useEffect(() => {
@@ -1420,6 +1423,42 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     setToastType('info');
     setShowToast(true);
   }, [orderType, appliedPromo, t]);
+
+  // Remove free-shipping promos when the user switches to outside Amman zone
+  useEffect(() => {
+    if (deliveryZone !== 'outside_amman') {
+      return;
+    }
+
+    const hasFreeShippingPromo = appliedPromo?.discount_type === 'free_shipping';
+    const hasFreeShippingRef = lastValidatedPromoRef.current?.discount_type === 'free_shipping';
+
+    if (!hasFreeShippingPromo && !hasFreeShippingRef) {
+      return;
+    }
+
+    if (hasFreeShippingPromo) {
+      setAppliedPromo(null);
+      // appliedPromo changing will trigger calculateOrder via its dependency
+    }
+
+    if (hasFreeShippingRef) {
+      lastValidatedPromoRef.current = null;
+    }
+
+    setPromoCode(prev => (prev ? '' : prev));
+    promoManuallyRemovedRef.current = true;
+
+    setToastMessage(t('checkout.freeShippingRemovedForOutsideAmman'));
+    setToastType('info');
+    setShowToast(true);
+
+    // If appliedPromo was already null but the ref had a stale free_shipping promo,
+    // appliedPromo won't change so calculateOrder's dep won't re-fire — force it.
+    if (!hasFreeShippingPromo && hasFreeShippingRef) {
+      setTimeout(() => calculateOrder(), 50);
+    }
+  }, [deliveryZone, appliedPromo, t]);
 
   const resolveOrderId = useCallback((payload: any): string | null => {
     if (!payload) {
@@ -1713,8 +1752,16 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
       // When we have location data, always find the nearest branch (override defaults)
       console.log('📍 Searching for nearest branch among', branches.length, 'branches...');
-      let bestId: number | null = null;
-      let bestDist = Number.POSITIVE_INFINITY;
+      const hasAvailabilityData = Object.keys(branchAvailability).length > 0;
+
+      // Pass 1 — nearest branch that has confirmed available stock
+      let bestAvailableId: number | null = null;
+      let bestAvailableDist = Number.POSITIVE_INFINITY;
+
+      // Pass 2 — nearest branch by pure distance (fallback when availability not yet loaded)
+      let bestAnyId: number | null = null;
+      let bestAnyDist = Number.POSITIVE_INFINITY;
+
       for (const branch of branches) {
         const branchIdNumeric = Number(branch?.id);
         if (!Number.isFinite(branchIdNumeric)) {
@@ -1722,19 +1769,42 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         }
 
         const d = distanceKm(latitude, longitude, Number(branch.latitude), Number(branch.longitude));
-        console.log(`  Branch ${branchIdNumeric}: ${d?.toFixed(2)} km`);
-        if (d !== null && d < bestDist) {
-          bestDist = d;
-          bestId = branchIdNumeric;
+        if (d === null) continue;
+
+        const availStatus = branchAvailability[branchIdNumeric]?.status;
+        const isKnownUnavailable = hasAvailabilityData &&
+          (availStatus === 'unavailable' || availStatus === 'inactive' || availStatus === 'error');
+
+        console.log(`  Branch ${branchIdNumeric}: ${d?.toFixed(2)} km | stock: ${availStatus ?? 'unknown'}${isKnownUnavailable ? ' ⛔' : ''}`);
+
+        // Track closest overall (fallback)
+        if (d < bestAnyDist) {
+          bestAnyDist = d;
+          bestAnyId = branchIdNumeric;
         }
+
+        // Track closest with confirmed stock
+        if (!isKnownUnavailable && d < bestAvailableDist) {
+          bestAvailableDist = d;
+          bestAvailableId = branchIdNumeric;
+        }
+      }
+
+      // Prefer stock-available nearest; fall back to pure-distance nearest
+      const bestId = bestAvailableId ?? bestAnyId;
+      const bestDist = bestAvailableId !== null ? bestAvailableDist : bestAnyDist;
+      const usedFallback = bestAvailableId === null && bestAnyId !== null;
+
+      if (usedFallback) {
+        console.log('⚠️ No stock-available branch found, falling back to nearest by distance:', bestId);
       }
 
       if (bestId !== null) {
         const normalizedSelected = selectedBranchId ?? null;
         
-        // Only auto-select if no branch is currently selected
-        // This prevents overriding user's manual selection when they change branch
-        if (normalizedSelected === null) {
+        // Auto-select if no branch is selected yet, OR if the user has not manually
+        // chosen a branch (i.e. the current selection is a default / previous auto-pick).
+        if (normalizedSelected === null || !userManuallySelectedBranchRef.current) {
           console.log('✅ Auto-selecting nearest branch:', bestId, 'Distance:', bestDist?.toFixed(2), 'km');
           
           // Get branch name for notification
@@ -1763,12 +1833,21 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
     } catch (error) {
       console.warn('❌ Failed to auto-select nearest branch:', error);
     }
-  }, [branches, selectedAddress, selectedBranchId, setSelectedBranchId, isGuest, guestLocation]);
+  }, [branches, selectedAddress, selectedBranchId, setSelectedBranchId, isGuest, guestLocation, branchAvailability]);
 
-  // Auto-select nearest branch only when location changes, not when user manually selects
+  // When the delivery location changes, clear the manual-selection flag so the nearest
+  // branch can be re-evaluated for the new location.
   useEffect(() => {
-    pickNearestBranch();
-  }, [branches, selectedAddress, isGuest, guestLocation]);
+    userManuallySelectedBranchRef.current = false;
+  }, [selectedAddress, guestLocation]);
+
+  // Auto-select nearest branch when location OR availability data changes
+  // Skip while the branch modal is open to prevent overriding the user's in-modal selection
+  useEffect(() => {
+    if (!showBranchModal) {
+      pickNearestBranch();
+    }
+  }, [branches, selectedAddress, isGuest, guestLocation, branchAvailability, showBranchModal]);
 
   useEffect(() => {
     if (showBranchModal) {
@@ -1886,7 +1965,14 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         // Filter promos that meet the minimum order requirement
         const eligiblePromos = response.data.filter(promo => {
           const minOrder = promo.min_order_amount || 0;
-          return totalAmount >= minOrder;
+          if (totalAmount < minOrder) return false;
+          // Never auto-apply free_shipping promos for outside Amman orders —
+          // the delivery fee is mandatory for outside Amman regardless of promos.
+          if (promo.discount_type === 'free_shipping' && deliveryZone === 'outside_amman') {
+            console.log('🚫 Skipping free_shipping promo for outside_amman zone:', promo.code);
+            return false;
+          }
+          return true;
         });
 
         if (eligiblePromos.length === 0) {
@@ -2715,6 +2801,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         return;
       }
 
+      userManuallySelectedBranchRef.current = true;
       setSelectedBranchId(branch.id);
       setBranchStockWarnings([]);
       setBranchStockDetails([]);
@@ -2835,6 +2922,16 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
   };
 
   const placeOrder = async () => {
+    // Show loading immediately so the user gets instant feedback
+    setPlacingOrder(true);
+
+    const showError = (message: string) => {
+      setToastMessage(message);
+      setToastType('error');
+      setShowToast(true);
+      HapticFeedback.error();
+    };
+
     try {
       // Clear previous errors
       clearAllErrors();
@@ -2847,7 +2944,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
             const message = currentLanguage === 'ar' 
               ? storeStatusResponse.data.message_ar 
               : storeStatusResponse.data.message_en;
-            
+            showError(message || t('checkout.storeNotAcceptingOrders'));
             handleError('order', message, t('checkout.storeNotAcceptingOrders'));
             setPlacingOrder(false);
             return;
@@ -2859,6 +2956,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       }
 
       if (orderType === 'delivery' && deliveryZone === 'outside_amman' && ammanOnlyRestrictionWarning && ammanOnlyRestrictionWarning.count > 0) {
+        showError(t('checkout.ammanOnlyRestrictionAction'));
         handleError('order', t('checkout.ammanOnlyRestrictionAction'), t('checkout.ammanOnlyRestrictionTitle'));
         setPlacingOrder(false);
         return;
@@ -2872,12 +2970,15 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       }
 
       if (!user && !isGuest) {
-        handleError('order', t('checkout.authenticationRequired'), t('auth.loginRequired'));
+        const msg = t('checkout.authenticationRequired');
+        showError(msg);
+        handleError('order', msg, t('auth.loginRequired'));
         setPlacingOrder(false);
         return;
       }
 
       if (!items || items.length === 0) {
+        showError(t('cart.empty'));
         handleError('order', t('cart.empty'), t('cart.empty'));
         setPlacingOrder(false);
         return;
@@ -2892,12 +2993,14 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
       );
       
       if (invalidItems.length > 0) {
+        showError(t('checkout.invalidItemsInCart'));
         handleError('order', t('checkout.invalidItemsInCart'), t('checkout.invalidItems'));
         setPlacingOrder(false);
         return;
       }
 
       if (orderType === 'delivery' && !isGuest && !selectedAddress) {
+        showError(t('checkout.addressSelectionRequired'));
         handleError('order', t('checkout.addressSelectionRequired'), t('checkout.selectAddress'));
         setPlacingOrder(false);
         return;
@@ -2916,6 +3019,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
       // Validate order calculation exists and has valid totals
       if (!orderCalculation) {
+        showError(t('checkout.calculationRequired'));
         handleError('order', t('checkout.orderCalculationMissing'), t('checkout.calculationRequired'));
         setPlacingOrder(false);
         return;
@@ -2923,6 +3027,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
       const normalizedTotalAmount = Number(orderCalculation.total_amount);
       if (!Number.isFinite(normalizedTotalAmount) || normalizedTotalAmount < 0) {
+        showError(t('checkout.invalidOrderTotal'));
         handleError('order', t('checkout.invalidOrderTotal'), t('checkout.invalidTotal'));
         setPlacingOrder(false);
         return;
@@ -2938,11 +3043,10 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
         return;
       }
 
-      setPlacingOrder(true);
-
       // Enhanced branch and customer info validation
       let branchIdToUse = selectedBranchId || (branches[0]?.id ?? null);
       if (!branchIdToUse) {
+        showError(t('checkout.branchNotAvailable'));
         handleError('order', t('checkout.branchNotAvailable'), t('checkout.selectBranchMessage'));
         setPlacingOrder(false);
         return;
@@ -2957,12 +3061,14 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
 
       // Enhanced name and phone validation
       if (!derivedName || derivedName.length < 2) {
+        showError(t('checkout.customerNameRequired'));
         handleError('order', t('checkout.validCustomerNameRequired'), t('checkout.customerNameRequired'));
         setPlacingOrder(false);
         return;
       }
 
       if (!derivedPhone || !/^[0-9+\-\s()]{7,15}$/.test(derivedPhone)) {
+        showError(t('checkout.customerPhoneRequired'));
         handleError('order', t('checkout.validPhoneNumberRequired'), t('checkout.customerPhoneRequired'));
         setPlacingOrder(false);
         return;
@@ -4170,7 +4276,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
           onPress={placeOrder}
           loading={placingOrder}
           loadingText={t('checkout.placingOrder')}
-          disabled={!canPlaceOrder || loading || (storeStatus && !storeStatus.accepting_orders)}
+          disabled={!canPlaceOrder || loading || !!(storeStatus && !storeStatus.accepting_orders)}
           variant={canPlaceOrder ? 'primary' : 'secondary'}
           size="large"
           icon={canPlaceOrder ? 'checkmark-circle' : 'alert-circle'}
@@ -4525,6 +4631,7 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
                     isRTL && styles.rtlRow
                   ]}
                   onPress={() => {
+                    userManuallySelectedBranchRef.current = true;
                     setSelectedBranchId(branch.id);
                     setShowBranchModal(false);
                   }}

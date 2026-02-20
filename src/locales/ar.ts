@@ -905,6 +905,7 @@ export const ar = {
     readyToPlaceOrder: 'جاهز لتقديم الطلب!',
     // Free shipping text
     freeShippingRemovedForPickup: 'عروض الشحن المجاني متاحة لطلبات التوصيل فقط. تم إزالة الكود لأن الطلب للاستلام.',
+    freeShippingRemovedForOutsideAmman: 'عروض الشحن المجاني غير متاحة لطلبات خارج عمّان. تم إزالة كود الخصم.', 
     branchStockUnavailable: 'بعض المنتجات غير متوفرة في الفرع المحدد. يرجى تعديل السلة أو اختيار فرع آخر.',
     ammanOnlyRestrictionTitle: 'منطقة توصيل محددة',
     ammanOnlyRestrictionMessage: 'بعض المنتجات في سلتك متاحة للتوصيل داخل عمّان فقط.',
@@ -1057,7 +1058,8 @@ export const ar = {
       out_for_delivery: 'في الطريق',
       delivered: 'تم التوصيل',
       cancelled: 'ملغي',
-      receipt_confirmed: 'تم تأكيد الاستلام'
+      receipt_confirmed: 'تم تأكيد الاستلام',
+      order_edited: 'تم تعديل الطلب'
     },
     types: {
       delivery: 'توصيل',

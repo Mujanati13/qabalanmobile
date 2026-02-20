@@ -41,13 +41,18 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   const { t } = useTranslation();
   const { currentLanguage } = useLanguage();
   const isArabic = currentLanguage === 'ar';
-  const isRTL = false; // Override to force LTR
+  const isRTL = false; // Override to force LTR for cart items
   const { user, isGuest, logout } = useAuth();
   const { items, itemCount, totalAmount, updateQuantity, removeFromCart, clearCart, refreshCartProducts } = useCart();
   const [loading, setLoading] = useState(false);
   const [animatingItems, setAnimatingItems] = useState<Set<string>>(new Set());
   const [storeStatus, setStoreStatus] = useState<{ accepting_orders: boolean; message_en: string; message_ar: string } | null>(null);
   const formatAmount = useCallback((value: unknown) => formatCurrency(value, { isRTL }), [isRTL]);
+  
+  // Enable RTL support in I18nManager
+  useEffect(() => {
+    I18nManager.allowRTL(true);
+  }, []);
   
   const slideAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -824,47 +829,6 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
               </View>
             </View>
 
-            {/* Amman-only Delivery Restriction Warning */}
-            {ammanOnlyItems && (
-              <View style={styles.ammanOnlyWarningBanner}>
-                <View style={[styles.ammanOnlyWarningHeader, isRTL && {flexDirection: 'row-reverse'}]}>
-                  <Icon name="alert-circle" size={20} color="#ff9500" style={{ marginRight: isRTL ? 0 : 8, marginLeft: isRTL ? 8 : 0 }} />
-                  <Text style={[styles.ammanOnlyWarningTitle, isArabic && styles.rtlWarningText]}>
-                    {t('checkout.ammanOnlyRestrictionTitle')}
-                  </Text>
-                </View>
-                <Text style={[styles.ammanOnlyWarningText, isArabic && styles.rtlWarningText]}>
-                  {t('checkout.ammanOnlyRestrictionMessage')}
-                </Text>
-                <Text style={[styles.ammanOnlyWarningCount, isArabic && styles.rtlWarningText]}>
-                  {t('checkout.ammanOnlyRestrictionSummary', {
-                    count: ammanOnlyItems.count,
-                    count_label: ammanOnlyItems.count === 1 ? t('checkout.item') || 'item' : t('checkout.items') || 'items'
-                  })}
-                </Text>
-                <Text style={[styles.ammanOnlyItemsLabel, isArabic && styles.rtlWarningText]}>
-                  {t('checkout.ammanOnlyItems')}
-                </Text>
-                <View style={styles.ammanOnlyList}>
-                  {ammanOnlyItems.items.map((item, index) => (
-                    <View key={`${item.name}-${index}`} style={[styles.ammanOnlyItemRow, isArabic && styles.ammanOnlyItemRowRtl]}>
-                      <Text style={[styles.ammanOnlyBullet, isArabic && styles.ammanOnlyBulletRtl]}>•</Text>
-                      <Text style={[styles.ammanOnlyItemName, isArabic && styles.rtlWarningText]}>
-                        {item.quantity > 1 ? `${item.name} ×${item.quantity}` : item.name}
-                      </Text>
-                    </View>
-                  ))}
-                  {ammanOnlyItems.hiddenCount > 0 && (
-                    <Text style={[styles.ammanOnlyMoreText, isArabic && styles.rtlWarningText]}>
-                      {isArabic
-                        ? `+${ammanOnlyItems.hiddenCount} منتجات أخرى`
-                        : `+${ammanOnlyItems.hiddenCount} more items`}
-                    </Text>
-                  )}
-                </View>
-              </View>
-            )}
-
             {/* Store Status Warning */}
             {storeStatus && !storeStatus.accepting_orders && (
               <View style={styles.storeClosedBanner}>
@@ -1286,9 +1250,15 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#ff9500',
   },
+  ammanOnlyWarningBannerRtl: {
+    borderLeftWidth: 0,
+    borderRightWidth: 4,
+    borderRightColor: '#ff9500',
+  },
   rtlWarningText: {
     textAlign: 'right',
     writingDirection: 'rtl',
+    width: '100%',
   },
   ammanOnlyWarningHeader: {
     flexDirection: 'row',

@@ -27,6 +27,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
   const { t } = useTranslation();
   const isRTL = false; // Override to force LTR
   const { user: authUser, logout, isGuest } = useAuth();
+  const { currentLanguage, changeLanguageWithAnimation, availableLanguages } = useLanguage();
   
   const [user, setUser] = useState<User | null>(authUser);
   const [loyaltyPoints, setLoyaltyPoints] = useState<UserLoyaltyPoints | null>(null);
@@ -64,6 +65,15 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
     setRefreshing(true);
     await loadUserData();
     setRefreshing(false);
+  };
+
+  const handleLanguageChange = async (language: string) => {
+    try {
+      await changeLanguageWithAnimation(language);
+    } catch (error) {
+      console.error('Error changing language:', error);
+      Alert.alert(t('common.error'), t('settings.languageChangeError'));
+    }
   };
 
   const handleLogout = () => {
@@ -139,16 +149,37 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
           <Text style={[styles.loginButtonText, isRTL && styles.rtlText]}>{t('auth.login')}</Text>
         </TouchableOpacity>
         
-        {/* Basic settings that don't require auth */}
+        {/* Language Selector for Guest Users */}
         <View style={styles.guestMenu}>
-          <TouchableOpacity
-            style={[styles.menuItem, isRTL && styles.rtlRowReverse]}
-            onPress={() => navigation.navigate('Settings')}
-          >
-            <Icon name="settings-outline" size={20} color="#666" />
-            <Text style={[styles.menuItemTitle, isRTL && styles.rtlText]}>{t('settings.title')}</Text>
-            <Icon name="chevron-forward" size={20} color="#ccc" />
-          </TouchableOpacity>
+          <View style={[styles.languageSelectorContainer, isRTL && styles.rtlRowReverse]}>
+            <Icon name="language-outline" size={20} color="#666" style={{ marginRight: 12 }} />
+            <View style={styles.languageSelectorContent}>
+              <Text style={[styles.languageLabel, isRTL && styles.rtlText]}>{t('settings.language')}</Text>
+              <View style={[styles.languageButtonsRow, isRTL && styles.rtlRow]}>
+                {Object.entries(availableLanguages).map(([code, label]) => (
+                  <TouchableOpacity
+                    key={code}
+                    style={[
+                      styles.languageButton,
+                      currentLanguage === code && styles.languageButtonActive,
+                      isRTL && styles.rtlLanguageButton
+                    ]}
+                    onPress={() => handleLanguageChange(code)}
+                  >
+                    <Text
+                      style={[
+                        styles.languageButtonText,
+                        currentLanguage === code && styles.languageButtonTextActive,
+                        isRTL && styles.rtlText
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
         </View>
       </View>
     );
@@ -549,6 +580,67 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 8,
     overflow: 'hidden',
+  },
+  languageSelectorContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+  },
+  rtlRowReverse: {
+    flexDirection: 'row-reverse',
+  },
+  languageSelectorContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  rtlLanguageSelectorContent: {
+    marginLeft: 0,
+    marginRight: 12,
+  },
+  languageLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+    textAlign: 'left',
+    writingDirection: 'ltr',
+  },
+  languageButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  rtlRow: {
+    flexDirection: 'row-reverse',
+  },
+  languageButton: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#f8f9fa',
+    alignItems: 'center',
+  },
+  rtlLanguageButton: {
+    alignItems: 'center',
+  },
+  languageButtonActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  languageButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#666',
+    textAlign: 'center',
+    writingDirection: 'ltr',
+  },
+  languageButtonTextActive: {
+    color: '#fff',
+    fontWeight: '600',
   },
   footerCredit: {
     marginTop: 0,
