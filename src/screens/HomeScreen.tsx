@@ -31,8 +31,8 @@ import { Button, Card, SearchBar, CachedImage } from '../components/common';
 import { formatCurrency } from '../utils/currency';
 
 const { width: screenWidth } = Dimensions.get('window');
-const BANNER_WIDTH = screenWidth - 40;
-const BANNER_HEIGHT = BANNER_WIDTH * 0.50; // Original size with moderate height
+const BANNER_WIDTH = screenWidth;
+const BANNER_HEIGHT = BANNER_WIDTH * 0.48;
 
 interface HomeScreenProps {
   navigation: any;
@@ -407,21 +407,33 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
         {bannerImage && !failedImagesRef.current.has(`banner-${item.id}`) ? (
-          <CachedImage
-            uri={bannerImage}
-            style={styles.bannerImage}
-            resizeMode="contain"
-            pointerEvents="none"
-            showLoadingIndicator={true}
-            onError={() => {
-              failedImagesRef.current.add(`banner-${item.id}`);
-            }}
-            fallbackComponent={
-              <View style={[styles.bannerImage, styles.bannerIconFallback]}>
-                <Icon name="image-outline" size={60} color={Colors.primary} />
-              </View>
-            }
-          />
+          <View style={StyleSheet.absoluteFill}>
+            {/* Blurred Background for vertical/non-matching aspect ratio images */}
+            <CachedImage
+              uri={bannerImage}
+              style={[StyleSheet.absoluteFillObject, { opacity: 0.6 }] as ImageStyle}
+              resizeMode="cover"
+              blurRadius={15}
+              pointerEvents="none"
+              showLoadingIndicator={false}
+            />
+            {/* Main Image */}
+            <CachedImage
+              uri={bannerImage}
+              style={styles.bannerImage}
+              resizeMode="contain"
+              pointerEvents="none"
+              showLoadingIndicator={true}
+              onError={() => {
+                failedImagesRef.current.add(`banner-${item.id}`);
+              }}
+              fallbackComponent={
+                <View style={[styles.bannerImage, styles.bannerIconFallback]}>
+                  <Icon name="image-outline" size={60} color={Colors.primary} />
+                </View>
+              }
+            />
+          </View>
         ) : (
           <View style={[styles.bannerImage, styles.bannerIconFallback]}>
             <Icon name="image-outline" size={60} color={Colors.primary} />
@@ -848,7 +860,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         {/* Modern Banner Slider */}
         {(banners && banners.length > 0) && (
           <View style={styles.modernBannerSection}>
-            <Text style={[styles.modernSectionTitle, { textAlign: 'left', writingDirection: 'ltr' }]}>
+            <Text style={[styles.modernSectionTitle, { textAlign: 'left', writingDirection: 'ltr', paddingHorizontal: Spacing.lg }]}>
               {t('home.featuredOffers') || 'Featured Offers'}
             </Text>
             <FlatList
@@ -859,7 +871,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
-              snapToInterval={BANNER_WIDTH + 20}
+              snapToInterval={BANNER_WIDTH}
               decelerationRate="fast"
               contentContainerStyle={styles.modernBannerList}
               removeClippedSubviews={true}
@@ -872,7 +884,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 stopAutoSlide();
               }}
               onMomentumScrollEnd={(event) => {
-                const newIndex = Math.round(event.nativeEvent.contentOffset.x / (BANNER_WIDTH + 20));
+                const newIndex = Math.round(event.nativeEvent.contentOffset.x / BANNER_WIDTH);
                 setCurrentBannerIndex(newIndex);
                 resetAutoSlide();
               }}
@@ -1437,7 +1449,7 @@ const styles = StyleSheet.create({
   
   // Modern Banner Styles
   modernBannerSection: {
-    paddingHorizontal: Spacing.lg,
+    paddingHorizontal: 0,
     marginBottom: Spacing.xl,
   },
   modernBannerList: {
@@ -1696,8 +1708,8 @@ const styles = StyleSheet.create({
   bannerContainer: {
     width: BANNER_WIDTH,
     height: BANNER_HEIGHT,
-    marginHorizontal: Spacing.sm,
-    borderRadius: BorderRadius.xl,
+    marginHorizontal: 0,
+    borderRadius: 0,
     overflow: 'hidden',
     backgroundColor: Colors.backgroundCard,
   },

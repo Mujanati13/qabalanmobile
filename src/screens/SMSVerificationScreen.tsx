@@ -132,7 +132,6 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
         }
       } else {
         // New user - registration flow with basic user info
-        // For now, create account with minimal info and default name/password
         const registrationResponse = await apiService.registerWithSMS({
           first_name: userData?.first_name || 'User',
           last_name: userData?.last_name || 'Name',
@@ -142,31 +141,23 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
           language: currentLanguage,
         });
 
-        if (registrationResponse.success) {
-          // After registration, log the user in to initialize their session
-          const loginAfterRegister = await apiService.loginWithSMS(phone, verificationCode);
+        if (registrationResponse.success && registrationResponse.data) {
+          // Registration now returns tokens directly — no separate login needed
+          // Tokens are saved automatically by apiService.registerWithSMS
+          const regData = registrationResponse.data as any;
+          const user = regData.user;
+          const hasCompleteProfile = user?.birth_date && user?.gender;
 
-          if (loginAfterRegister.success) {
-            // Check if user has complete profile information
-            const user = loginAfterRegister.data?.user;
-            const hasCompleteProfile = user?.birth_date && user?.gender;
-
-            if (!hasCompleteProfile) {
-              setPendingProfileCompletion(true);
-            }
-
-            // Activate session - this switches AppNavigator from AuthNavigator to Tab.Navigator
-            await activateAuthenticatedSession(loginAfterRegister.data?.user);
-          } else {
-            Alert.alert(t('common.error'), getErrorMessage(loginAfterRegister.message));
+          if (!hasCompleteProfile) {
+            setPendingProfileCompletion(true);
           }
+
+          await activateAuthenticatedSession(user);
         } else {
-          // If registration fails, might be because user already exists
-          // Try login instead
+          // Registration failed — user might already exist, try login
           const loginResponse = await apiService.loginWithSMS(phone, verificationCode);
           
           if (loginResponse.success) {
-            // Check if user has complete profile information
             const user = loginResponse.data?.user;
             const hasCompleteProfile = user?.birth_date && user?.gender;
 
@@ -174,7 +165,6 @@ const SMSVerificationScreen: React.FC<SMSVerificationScreenProps> = ({
               setPendingProfileCompletion(true);
             }
 
-            // Activate session - this switches AppNavigator from AuthNavigator to Tab.Navigator
             await activateAuthenticatedSession(loginResponse.data?.user);
           } else {
             Alert.alert(t('common.error'), getErrorMessage(registrationResponse.message));

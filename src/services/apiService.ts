@@ -951,12 +951,20 @@ class ApiService {
     language?: string;
     birth_date?: string;
     gender?: string;
-  }): Promise<ApiResponse<{ user: User }>> {
+  }): Promise<ApiResponse<{ user: User; tokens?: Tokens }>> {
     const normalizedPhone = this.normalizePhoneNumber(data.phone);
-    return this.makeRequest<{ user: User }>('/auth/register-with-sms', {
+    const response = await this.makeRequest<{ user: User; tokens?: Tokens }>('/auth/register-with-sms', {
       method: 'POST',
       body: JSON.stringify({ ...data, phone: normalizedPhone }),
     });
+
+    // Save tokens if returned by backend
+    if (response.success && response.data?.tokens) {
+      await this.saveTokens(response.data.tokens);
+      await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
+    }
+
+    return response;
   }
 
   async loginWithSMS(phone: string, sms_code: string): Promise<ApiResponse<{ user: User; tokens: Tokens }>> {

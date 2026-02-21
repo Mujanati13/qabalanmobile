@@ -13,6 +13,7 @@ import {
   I18nManager,
 } from 'react-native';
 import { launchImageLibrary, ImagePickerResponse, MediaType } from 'react-native-image-picker';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useTranslation } from 'react-i18next';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -69,17 +70,22 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation, route
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [tempDate, setTempDate] = useState('');
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date(2000, 0, 1));
 
   useEffect(() => {
     if (authUser) {
+      // Format birth_date from API (may be ISO string) to YYYY-MM-DD
+      const formattedBirthDate = authUser.birth_date
+        ? formatDateToYYYYMMDD(authUser.birth_date) || ''
+        : '';
+      
       setFormData({
         first_name: authUser.first_name || '',
         last_name: authUser.last_name || '',
         email: authUser.email || '',
         phone: authUser.phone || '',
         gender: authUser.gender || '',
-        birth_date: authUser.birth_date || '',
+        birth_date: formattedBirthDate,
         notification_promo: authUser.notification_promo ?? true,
         notification_orders: authUser.notification_orders ?? true,
       });
@@ -240,45 +246,46 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation, route
     setFormData(prev => ({ ...prev, [field]: !prev[field] }));
   };
 
+  const formatDateString = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const handleDateChange = () => {
+    let initial = new Date(2000, 0, 1);
+    if (formData.birth_date) {
+      // birth_date is always in YYYY-MM-DD format in formData
+      const parsed = new Date(formData.birth_date + 'T00:00:00');
+      if (!isNaN(parsed.getTime())) initial = parsed;
+    }
+    setSelectedDate(initial);
     setShowDatePicker(true);
-    // Initialize with current date or today's date
-    setTempDate(formData.birth_date || new Date().toISOString().split('T')[0]);
+  };
+
+  const onDatePickerChange = (event: DateTimePickerEvent, date?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+      if (event.type === 'set' && date) {
+        const formatted = formatDateString(date);
+        setFormData(prev => ({ ...prev, birth_date: formatted }));
+        if (errors.birth_date) setErrors(prev => ({ ...prev, birth_date: '' }));
+      }
+    } else {
+      if (date) setSelectedDate(date);
+    }
   };
 
   const confirmDate = () => {
-    if (tempDate) {
-      setFormData(prev => ({ ...prev, birth_date: tempDate }));
-    }
+    const formatted = formatDateString(selectedDate);
+    setFormData(prev => ({ ...prev, birth_date: formatted }));
+    if (errors.birth_date) setErrors(prev => ({ ...prev, birth_date: '' }));
     setShowDatePicker(false);
   };
 
   const cancelDate = () => {
-    setTempDate(formData.birth_date);
     setShowDatePicker(false);
-  };
-
-  const handleDateInput = (text: string) => {
-    // Allow only numbers, dashes, and slashes, format as YYYY-MM-DD
-    let cleanedText = text.replace(/[^0-9\-\/]/g, '');
-    
-    // Auto-format to YYYY-MM-DD as user types
-    if (cleanedText.length === 8 && !cleanedText.includes('-')) {
-      // If user enters YYYYMMDD, format to YYYY-MM-DD
-      cleanedText = `${cleanedText.substring(0, 4)}-${cleanedText.substring(4, 6)}-${cleanedText.substring(6, 8)}`;
-    } else if (cleanedText.includes('/')) {
-      // Convert MM/DD/YYYY or DD/MM/YYYY to YYYY-MM-DD
-      const parts = cleanedText.split('/');
-      if (parts.length === 3) {
-        const [part1, part2, part3] = parts;
-        if (part3.length === 4) {
-          // Assume MM/DD/YYYY format
-          cleanedText = `${part3}-${part1.padStart(2, '0')}-${part2.padStart(2, '0')}`;
-        }
-      }
-    }
-    
-    setTempDate(cleanedText);
   };
 
   const handleImagePicker = () => {
@@ -602,42 +609,49 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation, route
         </TouchableOpacity>
       </View>
 
-      {/* Date Picker Modal */}
-      <Modal
-        visible={showDatePicker}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={cancelDate}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={cancelDate}>
-                <Text style={styles.modalCancelText}>{t('common.cancel')}</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>{t('profile.selectBirthDate')}</Text>
-              <TouchableOpacity onPress={confirmDate}>
-                <Text style={styles.modalConfirmText}>{t('common.confirm')}</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.dateInputContainer}>
-              <Text style={styles.dateInputLabel}>{t('profile.dateInputLabel')}</Text>
-              <TextInput
-                style={styles.dateInput}
-                value={tempDate}
-                onChangeText={handleDateInput}
-                placeholder={t('profile.datePlaceholder')}
-                maxLength={10}
-                keyboardType="numeric"
+      {/* Date Picker — Android: native dialog, iOS: modal with spinner */}
+      {Platform.OS === 'android' && showDatePicker && (
+        <DateTimePicker
+          value={selectedDate}
+          mode="date"
+          display="default"
+          onChange={onDatePickerChange}
+          maximumDate={new Date()}
+          minimumDate={new Date(1920, 0, 1)}
+        />
+      )}
+
+      {Platform.OS === 'ios' && (
+        <Modal
+          visible={showDatePicker}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={cancelDate}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <TouchableOpacity onPress={cancelDate}>
+                  <Text style={styles.modalCancelText}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>{t('profile.selectBirthDate')}</Text>
+                <TouchableOpacity onPress={confirmDate}>
+                  <Text style={styles.modalConfirmText}>{t('common.confirm')}</Text>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                value={selectedDate}
+                mode="date"
+                display="spinner"
+                onChange={onDatePickerChange}
+                maximumDate={new Date()}
+                minimumDate={new Date(1920, 0, 1)}
+                style={{ height: 200 }}
               />
-              <Text style={styles.dateInputHint}>
-                {t('profile.dateInputHint')}
-              </Text>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
     </ScrollView>
   );
 };
@@ -916,28 +930,7 @@ const styles = StyleSheet.create({
     color: '#007AFF',
     fontWeight: '600',
   },
-  dateInputContainer: {
-    marginBottom: 20,
-  },
-  dateInputLabel: {
-    fontSize: 16,
-    color: '#333',
-    marginBottom: 8,
-  },
-  dateInput: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#fff',
-  },
-  dateInputHint: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
+
   required: {
     color: '#FF3B30',
     fontSize: 14,

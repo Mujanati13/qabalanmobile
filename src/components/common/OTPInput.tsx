@@ -1,13 +1,13 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   TextInput,
   StyleSheet,
   Text,
   Platform,
+  Pressable,
   ViewStyle,
   TextStyle,
-  I18nManager,
 } from 'react-native';
 import { Colors, Typography, Spacing, BorderRadius, Shadow } from '../../theme';
 
@@ -49,141 +49,83 @@ const OTPInput: React.FC<OTPInputProps> = ({
   focusedStyle,
   errorStyle,
 }) => {
-  const [focusedIndex, setFocusedIndex] = useState<number | null>(autoFocus ? 0 : null);
-  const inputRefs = useRef<Array<TextInput | null>>([]);
+  const hiddenInputRef = useRef<TextInput>(null);
+  const [isFocused, setIsFocused] = useState(false);
 
-  // Initialize refs array
+  // Auto-focus on mount
   useEffect(() => {
-    inputRefs.current = inputRefs.current.slice(0, length);
-  }, [length]);
-
-  // Auto-focus first input on mount
-  useEffect(() => {
-    if (autoFocus && inputRefs.current[0]) {
-      setTimeout(() => {
-        inputRefs.current[0]?.focus();
-      }, 100);
+    if (autoFocus) {
+      setTimeout(() => hiddenInputRef.current?.focus(), 100);
     }
   }, [autoFocus]);
 
-  const handleChangeText = (text: string, index: number) => {
-    // Normalize Arabic-Indic digits to Western digits, then strip non-numeric
-    const sanitized = normalizeDigits(text).replace(/[^0-9]/g, '');
+  const handlePress = useCallback(() => {
+    hiddenInputRef.current?.focus();
+  }, []);
 
-    // Handle auto-fill or paste of multiple digits (e.g. full OTP code)
-    if (sanitized.length > 1) {
-      // When auto-fill triggers on any field, distribute starting from field 0
-      // if the pasted length covers the entire OTP
-      const startIndex = sanitized.length >= length ? 0 : index;
-      const newValue = value.split('');
-      const digits = sanitized.slice(0, length - startIndex).split('');
+  const handleChangeText = useCallback((text: string) => {
+    // Normalize Arabic-Indic numerals and strip non-digits
+    const sanitized = normalizeDigits(text).replace(/[^0-9]/g, '').slice(0, length);
+    onChange(sanitized);
+  }, [length, onChange]);
 
-      digits.forEach((digit, i) => {
-        newValue[startIndex + i] = digit;
-      });
+  const handleFocus = useCallback(() => setIsFocused(true), []);
+  const handleBlur = useCallback(() => setIsFocused(false), []);
 
-      const newOTP = newValue.join('').slice(0, length);
-      onChange(newOTP);
-
-      // Focus the last filled field
-      const lastFilledIndex = Math.min(startIndex + digits.length, length) - 1;
-      setTimeout(() => {
-        inputRefs.current[lastFilledIndex]?.focus();
-      }, 10);
-      return;
-    }
-
-    // Handle single digit input
-    const newValue = value.split('');
-    newValue[index] = sanitized;
-    const newOTP = newValue.join('');
-
-    onChange(newOTP);
-
-    // Auto-focus next input if digit was entered
-    if (sanitized && index < length - 1) {
-      setTimeout(() => {
-        inputRefs.current[index + 1]?.focus();
-      }, 10);
-    }
-  };
-
-  const handleKeyPress = (e: any, index: number) => {
-    const key = e.nativeEvent.key;
-
-    // Handle backspace
-    if (key === 'Backspace') {
-      if (!value[index] && index > 0) {
-        // If current field is empty, move to previous field
-        setTimeout(() => {
-          inputRefs.current[index - 1]?.focus();
-        }, 10);
-      } else {
-        // Clear current field
-        const newValue = value.split('');
-        newValue[index] = '';
-        onChange(newValue.join(''));
-      }
-    }
-  };
-
-  const handleFocus = (index: number) => {
-    setFocusedIndex(index);
-  };
-
-  const handleBlur = () => {
-    setFocusedIndex(null);
-  };
-
-  const getInputValue = (index: number): string => {
-    return value[index] || '';
-  };
+  // The cursor sits on the next empty position
+  const cursorIndex = value.length < length ? value.length : length - 1;
 
   return (
     <View style={[styles.container, containerStyle]}>
-      <View style={styles.inputsContainer}>
+      {/* Single hidden TextInput — receives all keyboard + auto-fill input */}
+      <TextInput
+        ref={hiddenInputRef}
+        value={value}
+        onChangeText={handleChangeText}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        keyboardType="number-pad"
+        maxLength={length}
+        editable={!disabled}
+        textContentType="oneTimeCode"
+        autoComplete={Platform.OS === 'android' ? 'sms-otp' : 'one-time-code'}
+        importantForAutofill="yes"
+        autoFocus={autoFocus}
+        style={styles.hiddenInput}
+        caretHidden
+      />
+
+      {/* Visible digit boxes — purely presentational */}
+      <Pressable
+        onPress={handlePress}
+        style={styles.inputsContainer}
+      >
         {Array.from({ length }).map((_, index) => {
-          const isFocused = focusedIndex === index;
           const hasValue = !!value[index];
-          
+          const isActive = isFocused && index === cursorIndex;
+
           return (
             <View
               key={index}
               style={[
                 styles.inputWrapper,
                 inputStyle,
-                isFocused && styles.inputFocused,
-                isFocused && focusedStyle,
+                isActive && styles.inputFocused,
+                isActive && focusedStyle,
                 error && styles.inputError,
                 error && errorStyle,
                 hasValue && styles.inputFilled,
               ]}
             >
-              <TextInput
-                ref={(ref) => {
-                  inputRefs.current[index] = ref;
-                }}
-                style={[styles.input, textStyle]}
-                value={getInputValue(index)}
-                onChangeText={(text) => handleChangeText(text, index)}
-                onKeyPress={(e) => handleKeyPress(e, index)}
-                onFocus={() => handleFocus(index)}
-                onBlur={handleBlur}
-                keyboardType="number-pad"
-                maxLength={length}
-                selectTextOnFocus
-                editable={!disabled}
-                // OTP auto-fill hints only on the first input to avoid conflicts
-                textContentType={index === 0 ? 'oneTimeCode' : 'none'}
-                autoComplete={index === 0
-                  ? (Platform.OS === 'android' ? 'sms-otp' : 'one-time-code')
-                  : 'off'}
-                importantForAutofill={index === 0 ? 'yes' : 'no'}
-              />
+              <Text style={[styles.digitText, textStyle]}>
+                {value[index] || ''}
+              </Text>
+              {isActive && !hasValue && <View style={styles.cursor} />}
             </View>
           );
         })}
-      </View>
+      </Pressable>
+
       {error && errorMessage && (
         <Text style={styles.errorText}>{errorMessage}</Text>
       )}
@@ -195,12 +137,17 @@ const styles = StyleSheet.create({
   container: {
     width: '100%',
   },
+  hiddenInput: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
   inputsContainer: {
-    flexDirection: 'row', // Always LTR for OTP codes
+    flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: Spacing.sm,
-    // Force LTR layout regardless of app language
     direction: 'ltr' as any,
   },
   inputWrapper: {
@@ -230,14 +177,18 @@ const styles = StyleSheet.create({
     borderColor: Colors.error,
     backgroundColor: '#FFF5F5',
   },
-  input: {
-    width: '100%',
-    height: '100%',
+  digitText: {
     textAlign: 'center',
     fontSize: 24,
     fontWeight: '600',
     color: Colors.textPrimary,
-    padding: 0,
+  },
+  cursor: {
+    position: 'absolute',
+    width: 2,
+    height: 28,
+    backgroundColor: Colors.primary,
+    borderRadius: 1,
   },
   errorText: {
     ...Typography.body.small,

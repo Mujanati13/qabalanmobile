@@ -320,9 +320,6 @@ const ProductsScreen: React.FC<ProductsScreenProps> = ({ navigation, route }) =>
       <TouchableOpacity style={styles.retryButton} onPress={() => loadProducts()}>
         <Text style={styles.retryText}>{t('common.tryAgain')}</Text>
       </TouchableOpacity>
-      <Text style={styles.debugText}>
-        Debug: Products count: {products.length} | Error: {error || 'None'}
-      </Text>
     </View>
   );
 
@@ -499,8 +496,9 @@ const ProductsScreen: React.FC<ProductsScreenProps> = ({ navigation, route }) =>
                 ]}>
                   {category.image ? (
                     <CachedImage
-                      uri={ApiService.getImageUrl(category.image)}
+                      uri={ApiService.getImageUrl(category.image, 'categories')}
                       style={styles.categoryCircleImage}
+                      containerStyle={styles.categoryCircleImageContainer}
                       resizeMode="cover"
                       showLoadingIndicator={true}
                       loadingIndicatorSize="small"
@@ -725,12 +723,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  debugText: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 10,
-    textAlign: 'center',
-  },
   title: {
     fontSize: 18,
     fontWeight: 'bold',
@@ -835,6 +827,13 @@ const styles = StyleSheet.create({
   categoryCircleImage: {
     width: '100%',
     height: '100%',
+  },
+  categoryCircleImageContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   categoryCircleText: {
     fontSize: 12,

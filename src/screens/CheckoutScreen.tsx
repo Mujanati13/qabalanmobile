@@ -3542,14 +3542,63 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({ navigation }) => {
               </TouchableOpacity>
             </View>
             
-            {deliveryZone === 'outside_amman' && (
-              <View style={styles.deliveryZoneNotice}>
-                <Icon name="information-circle" size={16} color="#007AFF" style={{marginRight: isRTL ? 0 : 6, marginLeft: isRTL ? 6 : 0}} />
-                <Text style={[styles.deliveryZoneNoticeText, isRTL && styles.rtlText]}>
-                  {t('checkout.outsideAmmanNotice')}
-                </Text>
-              </View>
-            )}
+            {deliveryZone === 'outside_amman' && (() => {
+              const dc = (orderCalculation as any)?.delivery_calculation;
+              const freeEnabled    = dc?.free_delivery_enabled === true;
+              const freeThreshold  = freeEnabled ? (Number(dc?.free_delivery_threshold) || 0) : 0;
+              const fixedFee       = Number(dc?.delivery_fee) || 0;
+              const subtotal       = Number(orderCalculation?.subtotal) || 0;
+              const thresholdMet   = dc?.free_shipping_applied === true && Number(orderCalculation?.delivery_fee) === 0;
+
+              if (freeEnabled && freeThreshold > 0) {
+                if (thresholdMet) {
+                  return (
+                    <View style={[styles.deliveryZoneNotice, { backgroundColor: '#edfaf1', borderColor: '#52c41a' }]}>
+                      <Icon name="checkmark-circle" size={16} color="#52c41a" style={{marginRight: isRTL ? 0 : 6, marginLeft: isRTL ? 6 : 0}} />
+                      <Text style={[styles.deliveryZoneNoticeText, { color: '#389e0d' }, isRTL && styles.rtlText]}>
+                        {t('checkout.outsideAmmanFreeApplied')}
+                      </Text>
+                    </View>
+                  );
+                }
+                const remaining = freeThreshold - subtotal;
+                const progress  = Math.min(100, Math.round((subtotal / freeThreshold) * 100));
+                return (
+                  <View style={styles.deliveryZoneNotice}>
+                    <View style={{flex: 1}}>
+                      <View style={[{flexDirection: 'row', alignItems: 'center'}, isRTL && {flexDirection: 'row-reverse'}]}>
+                        <Icon name="gift-outline" size={16} color="#007AFF" style={{marginRight: isRTL ? 0 : 6, marginLeft: isRTL ? 6 : 0}} />
+                        <Text style={[styles.deliveryZoneNoticeText, isRTL && styles.rtlText]}>
+                          {t('checkout.outsideAmmanNoticeWithFree', {
+                            threshold: formatAmount(freeThreshold),
+                            fee: formatAmount(fixedFee > 0 ? fixedFee : undefined),
+                          })}
+                        </Text>
+                      </View>
+                      {remaining > 0 && (
+                        <>
+                          <View style={{height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, marginTop: 6, overflow: 'hidden'}}>
+                            <View style={{height: 4, width: `${progress}%`, backgroundColor: '#007AFF', borderRadius: 2}} />
+                          </View>
+                          <Text style={[{fontSize: 11, color: '#666', marginTop: 3}, isRTL && styles.rtlText]}>
+                            {t('checkout.outsideAmmanSpendMore', { amount: formatAmount(remaining) })}
+                          </Text>
+                        </>
+                      )}
+                    </View>
+                  </View>
+                );
+              }
+
+              return (
+                <View style={styles.deliveryZoneNotice}>
+                  <Icon name="information-circle" size={16} color="#007AFF" style={{marginRight: isRTL ? 0 : 6, marginLeft: isRTL ? 6 : 0}} />
+                  <Text style={[styles.deliveryZoneNoticeText, isRTL && styles.rtlText]}>
+                    {t('checkout.outsideAmmanNotice')}
+                  </Text>
+                </View>
+              );
+            })()}
           </View>
         )}
 
