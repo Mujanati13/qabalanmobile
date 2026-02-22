@@ -97,27 +97,49 @@ class NotificationService {
   /**
    * Initialize the notification service
    */
+  /**
+   * Update the navigation ref without re-running full initialization.
+   * Called by AppNavigator whenever the NavigationContainer mounts/remounts
+   * (e.g. after a language change that recreates the container).
+   */
+  setNavigationRef(ref: NavigationContainerRef<any> | null): void {
+    if (ref) {
+      console.log('[NOTIF] 🧭 Navigation ref updated via setNavigationRef');
+      this.navigationRef = ref;
+      // Flush any notification that arrived before navigation was ready
+      if (this.pendingNotification) {
+        const pending = this.pendingNotification;
+        this.pendingNotification = null;
+        setTimeout(() => this.handleNotificationNavigation(pending), 500);
+      }
+    }
+  }
+
   async initialize(navigationRef?: NavigationContainerRef<any>) {
-    // Prevent multiple initializations
+    // Always update the navigation ref, even on subsequent calls, so a
+    // recreated NavigationContainer (e.g. language change) is reflected.
+    if (navigationRef) {
+      this.navigationRef = navigationRef;
+      console.log('[NOTIF][DEBUG] ✅ Navigation ref set');
+
+      // Process any pending notification that was received before navigation was ready
+      if (this.pendingNotification) {
+        console.log('[NOTIF][DEBUG] 📮 Processing pending notification after navigation ready');
+        const pending = this.pendingNotification;
+        this.pendingNotification = null;
+        setTimeout(() => {
+          this.handleNotificationNavigation(pending);
+        }, 500);
+      }
+    }
+
+    // Prevent multiple full initializations
     if (this.isInitialized) {
       console.log('[NOTIF][DEBUG] ⚠️ Notification service already initialized, skipping...');
       return;
     }
 
     console.log('[NOTIF][DEBUG] 🚀 Initializing notification service...');
-    
-    if (navigationRef) {
-      this.navigationRef = navigationRef;
-      console.log('[NOTIF][DEBUG] ✅ Navigation ref set');
-      
-      // Process any pending notification that was received before navigation was ready
-      if (this.pendingNotification) {
-        console.log('[NOTIF][DEBUG] 📮 Processing pending notification after navigation ready');
-        setTimeout(() => {
-          this.handleNotificationNavigation(this.pendingNotification);
-        }, 500);
-      }
-    }
 
     try {
       // Initialize React Native Push Notification service
@@ -369,7 +391,11 @@ class NotificationService {
       // Handle notification opened from background/quit state
       messagingInstance.onNotificationOpenedApp((remoteMessage) => {
         console.log('[NOTIF] 📱 Notification opened from background:', JSON.stringify(remoteMessage, null, 2));
-        this.handleNotificationNavigation(remoteMessage);
+        // Small delay so the navigation stack finishes restoring from background
+        // before we push a new screen on top of it.
+        setTimeout(() => {
+          this.handleNotificationNavigation(remoteMessage);
+        }, 300);
       });
 
       // Handle notification opened from quit state (when app was completely closed)
@@ -661,17 +687,17 @@ class NotificationService {
 
         case 'support_reply':
           if (data.ticket_id) {
-            this.navigationRef.navigate('Account', {
+            this.navigationRef.navigate('Profile' as never, {
               screen: 'SupportTickets',
-              params: { 
+              params: {
                 ticketId: parseInt(data.ticket_id),
-                refresh: true 
+                refresh: true,
               },
-            });
+            } as never);
           } else {
-            this.navigationRef.navigate('Account', {
+            this.navigationRef.navigate('Profile' as never, {
               screen: 'SupportTickets',
-            });
+            } as never);
           }
           break;
 

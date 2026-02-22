@@ -468,7 +468,28 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
     const title = currentLanguage === 'ar' ? product.title_ar : product.title_en;
     const variantLabel = resolveVariantLabel();
     const unitPrice = resolveUnitPrice();
-    
+
+    // Resolve the best image URL for this cart item:
+    // 1. Prefer the selected variant's image_url (mirrors ProductDetailsScreen logic)
+    // 2. Fall back to the product's main_image
+    // Always pass through ApiService.getImageUrl() to fix relative/dev-host paths
+    const resolveItemImage = (): string => {
+      if (item.variants && item.variants.length > 0) {
+        const variantWithImage = item.variants.find((v: any) => v.image_url);
+        if (variantWithImage?.image_url) {
+          return apiService.getImageUrl(variantWithImage.image_url);
+        }
+      }
+      if (item.variant?.image_url) {
+        return apiService.getImageUrl(item.variant.image_url);
+      }
+      if (product.main_image) {
+        return apiService.getImageUrl(product.main_image);
+      }
+      return 'https://via.placeholder.com/80x80?text=No+Image';
+    };
+    const itemImage = resolveItemImage();
+
   console.log('Cart item debug -> unitPrice:', unitPrice, 'stored unit_price:', item.unit_price, 'base snapshot:', item.base_unit_price);
 
     // Calculate base price using same logic as ProductDetailsScreen
@@ -577,9 +598,7 @@ const CartScreen: React.FC<CartScreenProps> = ({ navigation }) => {
   <View style={[styles.cartItemContent, isRTL && styles.rtlCartItemContent]}>
           <View style={styles.imageContainer}>
             <Image
-              source={{ 
-                uri: product.main_image || 'https://via.placeholder.com/80x80?text=No+Image' 
-              }}
+              source={{ uri: itemImage }}
               style={styles.productImage}
               resizeMode="cover"
             />

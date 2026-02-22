@@ -14,10 +14,14 @@ import { Colors, Typography, Spacing, BorderRadius, Shadow } from '../../theme';
 /**
  * Convert Arabic-Indic digits (٠١٢٣٤٥٦٧٨٩) and Extended Arabic-Indic digits (۰۱۲۳۴۵۶۷۸۹)
  * to Western digits (0-9) so OTP auto-fill works with Arabic SMS messages.
+ * Also strips Unicode BiDi control characters that iOS/Android may inject
+ * when auto-filling from RTL SMS messages.
  */
 const normalizeDigits = (text: string): string => {
-  return text.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
-             .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0));
+  // Strip BiDi control characters (LRM, RLM, ALM, directional embeddings/isolates, ZW chars)
+  const stripped = text.replace(/[\u200B-\u200F\u061C\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
+  return stripped.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+                 .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0));
 };
 
 interface OTPInputProps {

@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// const API_BASE_URL = 'http://192.168.72.1:3015/api'; // Production URL
+// const API_BASE_URL = 'http://192.168.72.1:3015/api'; // Production URLs
 const API_BASE_URL = 'https://apiv2.qabalanbakery.com/api'; // Local development URL 
 
 interface LoginCredentials {

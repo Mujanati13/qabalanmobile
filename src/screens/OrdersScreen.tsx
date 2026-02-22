@@ -63,11 +63,8 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
     { key: 'cancelled', label: t('orders.statusLabels.cancelled') },
   ];
 
-  useEffect(() => {
-    loadOrders(true);
-  }, [selectedStatus]);
-
   // 🔄 Auto-refresh orders every 30 seconds when screen is focused
+  // useFocusEffect handles both initial/focus load and status filter changes
   useFocusEffect(
     useCallback(() => {
       if (!isPaymentInProgressRef.current) {
@@ -76,13 +73,14 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
       }
       
       // Start polling for order status updates every 30 seconds
+      // Use silent=true so polling doesn't flash the full-screen spinner
       pollingIntervalRef.current = setInterval(() => {
         if (isPaymentInProgressRef.current) {
           console.log('⏸️ Skipping poll - payment in progress');
           return;
         }
         console.log('🔄 Auto-refreshing orders (polling)');
-        loadOrders(true);
+        loadOrders(true, true);
       }, 30000); // 30 seconds
       
       // Cleanup polling when screen loses focus
@@ -174,13 +172,13 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
     initiateAutoPayment();
   }, [route?.params?.autoPayOrderId, route?.params?.autoPaySession, route?.params, navigation, t]);
 
-  const loadOrders = async (reset: boolean = false) => {
+  const loadOrders = async (reset: boolean = false, silent: boolean = false) => {
     // Handle guest users differently
     if (isGuest) {
       console.log('👤 Loading orders for guest user');
       try {
         if (reset) {
-          setLoading(true);
+          if (!silent) setLoading(true);
           setCurrentPage(1);
           
           // 🔄 GUEST ORDER SYNC: Sync orders from server when refreshing
@@ -238,7 +236,7 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
 
     try {
       if (reset) {
-        setLoading(true);
+        if (!silent) setLoading(true);
         setCurrentPage(1);
       } else {
         setLoadingMore(true);
@@ -364,7 +362,7 @@ const OrdersScreen: React.FC<OrdersScreenProps> = ({ navigation, route }) => {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    loadOrders(true);
+    loadOrders(true, true); // silent=true: RefreshControl already shows its own spinner
   }, [selectedStatus]);
 
   const loadMoreOrders = () => {

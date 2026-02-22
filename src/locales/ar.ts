@@ -528,6 +528,7 @@ export const ar = {
     addingToCart: 'جاري الإضافة إلى السلة...',
     addToCart: 'أضف إلى السلة',
     itemAdded: 'تمت إضافة {{quantity}} {{product}} إلى السلة',
+    itemWithVariantsAdded: 'تمت إضافة {{quantity}} {{product}} مع {{count}} خيار(ات) إلى السلة',
     variantsAdded: 'تمت إضافة {{count}} متغير(ات) من {{product}} إلى السلة',
     addItemsFirst: 'أضف بعض المنتجات إلى السلة أولًا',
     added: 'تمت الإضافة!',

@@ -12,6 +12,7 @@ import { ActivityIndicator, View, StyleSheet, Text, I18nManager, Image, Touchabl
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../theme/colors';
 import { Spacing } from '../theme';
+import notificationService from '../services/notificationService';
 
 // Import screens
 import HomeScreen from '../screens/HomeScreen';
@@ -477,12 +478,16 @@ const AppNavigator: React.FC<AppNavigatorProps> = ({ navigationRef: externalNavR
   const insets = useSafeAreaInsets();
   const internalNavRef = useRef<NavigationContainerRef<any>>(null);
 
-  // Combine internal and external refs
+  // Combine internal and external refs; also keep notificationService in sync
   const setNavRef = useCallback((ref: NavigationContainerRef<any> | null) => {
     (internalNavRef as any).current = ref;
     if (externalNavRef && 'current' in externalNavRef) {
       (externalNavRef as any).current = ref;
     }
+    // Always inform the notification service of the current navigation ref so
+    // deep-links from push notifications work even after the container is
+    // recreated (e.g. on language change).
+    notificationService.setNavigationRef(ref);
   }, [externalNavRef]);
 
   // Handle pending profile completion navigation after Tab.Navigator mounts

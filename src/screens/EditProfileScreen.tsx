@@ -646,7 +646,8 @@ const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ navigation, route
                 onChange={onDatePickerChange}
                 maximumDate={new Date()}
                 minimumDate={new Date(1920, 0, 1)}
-                style={{ height: 200 }}
+                textColor="#000000"
+                style={{ height: 216 }}
               />
             </View>
           </View>

@@ -614,6 +614,7 @@ export const en = {
     specialInstructions: 'Special Instructions',
     addToCart: 'Add to Cart',
     itemAdded: 'Added {{quantity}} {{product}} to cart',
+    itemWithVariantsAdded: 'Added {{quantity}} {{product}} with {{count}} option(s) to cart',
     variantsAdded: 'Added {{count}} variant(s) of {{product}} to cart',
     addError: 'Failed to add item to cart',
     addItemsFirst: 'Add some items to your cart first',
