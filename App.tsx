@@ -39,7 +39,6 @@ function App() {
           const currentRTL = I18nManager.isRTL;
 
           if (currentRTL !== shouldBeRTL) {
-            console.log('[APP] Updating I18nManager.isRTL from', currentRTL, 'to', shouldBeRTL);
             try {
               I18nManager.allowRTL(true);
               I18nManager.forceRTL(shouldBeRTL);
@@ -68,15 +67,12 @@ function App() {
         // First check if we need to reload
         const willReload = await checkRTLReload();
         if (willReload) {
-          console.log('[APP] App will reload, skipping initialization');
           return; // Don't initialize, we're about to reload
         }
         
         // Read stored language directly from AsyncStorage
         const storedLanguage = await AsyncStorage.getItem('user_language');
 
-        console.log('[APP] Stored language:', storedLanguage);
-        console.log('[APP] I18nManager.isRTL at init:', I18nManager.isRTL);
 
         await logRTLDiagnostics('App.initializeApp:beforeSync', {
           storedLanguage,

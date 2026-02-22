@@ -31,8 +31,11 @@ import { Button, Card, SearchBar, CachedImage } from '../components/common';
 import { formatCurrency } from '../utils/currency';
 
 const { width: screenWidth } = Dimensions.get('window');
-const BANNER_WIDTH = screenWidth;
-const BANNER_HEIGHT = BANNER_WIDTH * 0.48;
+const BANNER_CARD_WIDTH = 220;
+const BANNER_CARD_IMAGE_HEIGHT = 160;
+const BANNER_SNAP_INTERVAL = BANNER_CARD_WIDTH + 12;
+const BANNER_WIDTH = screenWidth; // kept for legacy references
+const BANNER_HEIGHT = BANNER_CARD_IMAGE_HEIGHT;
 
 interface HomeScreenProps {
   navigation: any;
@@ -391,62 +394,47 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   // Memoized render functions for optimal FlatList performance
   const renderBannerItem = useCallback(({ item, index }: { item: Category; index: number }) => {
     if (!item || typeof item !== 'object') return null;
-    
+
     const rawBannerImage = item.banner_mobile || item.banner_image || item.image;
     const bannerImage = rawBannerImage ? ApiService.getImageUrl(rawBannerImage, 'categories') : '';
-    // Use currentLanguage instead of isRTL to determine which text to show
     const title = currentLanguage === 'ar' ? (item.title_ar || item.title_en || '') : (item.title_en || item.title_ar || '');
+    const description = currentLanguage === 'ar' ? (item.description_ar || item.description_en || '') : (item.description_en || item.description_ar || '');
 
     return (
       <TouchableOpacity
         style={styles.bannerContainer}
         onPress={() => handleBannerPress(item)}
-        activeOpacity={0.8}
+        activeOpacity={0.85}
         delayPressIn={0}
         delayPressOut={0}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
-        {bannerImage && !failedImagesRef.current.has(`banner-${item.id}`) ? (
-          <View style={StyleSheet.absoluteFill}>
-            {/* Blurred Background for vertical/non-matching aspect ratio images */}
-            <CachedImage
-              uri={bannerImage}
-              style={[StyleSheet.absoluteFillObject, { opacity: 0.6 }] as ImageStyle}
-              resizeMode="cover"
-              blurRadius={15}
-              pointerEvents="none"
-              showLoadingIndicator={false}
-            />
-            {/* Main Image */}
+        {/* Image */}
+        <View style={styles.bannerImageWrapper}>
+          {bannerImage && !failedImagesRef.current.has(`banner-${item.id}`) ? (
             <CachedImage
               uri={bannerImage}
               style={styles.bannerImage}
-              resizeMode="contain"
+              resizeMode="cover"
               pointerEvents="none"
               showLoadingIndicator={true}
-              onError={() => {
-                failedImagesRef.current.add(`banner-${item.id}`);
-              }}
+              onError={() => { failedImagesRef.current.add(`banner-${item.id}`); }}
               fallbackComponent={
-                <View style={[styles.bannerImage, styles.bannerIconFallback]}>
-                  <Icon name="image-outline" size={60} color={Colors.primary} />
+                <View style={styles.bannerIconFallback}>
+                  <Icon name="image-outline" size={40} color={Colors.primary} />
                 </View>
               }
             />
-          </View>
-        ) : (
-          <View style={[styles.bannerImage, styles.bannerIconFallback]}>
-            <Icon name="image-outline" size={60} color={Colors.primary} />
-          </View>
-        )}
-        <View style={[styles.bannerOverlay, isRTL && styles.rtlBannerOverlay]} pointerEvents="none">
-          <Text style={[styles.bannerTitle, { textAlign: 'left', writingDirection: 'ltr' }]}>
-            {title || t('common.category')}
-          </Text>
-          {(item.description_ar || item.description_en) ? (
-            <Text style={[styles.bannerDescription, { textAlign: 'left', writingDirection: 'ltr' }]}>
-              {currentLanguage === 'ar' ? (item.description_ar || item.description_en || '') : (item.description_en || item.description_ar || '')}
-            </Text>
+          ) : (
+            <View style={styles.bannerIconFallback}>
+              <Icon name="image-outline" size={40} color={Colors.primary} />
+            </View>
+          )}
+        </View>
+        {/* Text below image */}
+        <View style={styles.bannerInfo}>
+          <Text style={styles.bannerTitle} numberOfLines={1}>{title || t('common.category')}</Text>
+          {description ? (
+            <Text style={styles.bannerDescription} numberOfLines={2}>{description}</Text>
           ) : null}
         </View>
       </TouchableOpacity>
@@ -869,10 +857,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               renderItem={renderBannerItem}
               keyExtractor={bannerKeyExtractor}
               horizontal
-              pagingEnabled
               showsHorizontalScrollIndicator={false}
-              snapToInterval={BANNER_WIDTH}
-              decelerationRate="fast"
+              decelerationRate="normal"
               contentContainerStyle={styles.modernBannerList}
               removeClippedSubviews={true}
               maxToRenderPerBatch={3}
@@ -884,8 +870,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 stopAutoSlide();
               }}
               onMomentumScrollEnd={(event) => {
-                const newIndex = Math.round(event.nativeEvent.contentOffset.x / BANNER_WIDTH);
-                setCurrentBannerIndex(newIndex);
+                const newIndex = Math.round(event.nativeEvent.contentOffset.x / BANNER_SNAP_INTERVAL);
+                setCurrentBannerIndex(Math.max(0, newIndex));
                 resetAutoSlide();
               }}
               onScrollToIndexFailed={(info) => {
@@ -1453,7 +1439,8 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
   },
   modernBannerList: {
-    paddingLeft: 0,
+    paddingHorizontal: 16,
+    gap: 12,
   },
   modernBannerDots: {
     flexDirection: 'row',
@@ -1537,10 +1524,14 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.md,
     marginRight: Spacing.sm,
     overflow: 'hidden',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+      android: { elevation: 3 },
+    }),
   },
   offerImage: {
     width: '100%',
-    height: 110,
+    height: 140,
   },
   offerImageFallback: {
     backgroundColor: Colors.backgroundLight,
@@ -1548,33 +1539,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   offerInfo: {
-    padding: Spacing.sm,
-    gap: 4,
+    padding: Spacing.md,
+    gap: 6,
   },
   rtlOfferInfo: {
     alignItems: 'flex-end',
   },
   offerTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontFamily: Typography.fontFamily.bold,
     color: Colors.textPrimary,
-    lineHeight: 18,
+    lineHeight: 20,
   },
   rtlOfferTitle: {
     textAlign: 'right',
   },
   offerDescription: {
-    fontSize: 12,
+    fontSize: 13,
     color: Colors.textSecondary,
     fontFamily: Typography.fontFamily.regular,
-    lineHeight: 16,
+    lineHeight: 18,
   },
   rtlOfferDescription: {
     textAlign: 'right',
   },
   offerMeta: {
-    marginTop: 4,
-    gap: 4,
+    marginTop: 6,
+    gap: 6,
   },
   rtlOfferMeta: {
     alignItems: 'flex-end',
@@ -1706,43 +1697,45 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.sm,
   },
   bannerContainer: {
-    width: BANNER_WIDTH,
-    height: BANNER_HEIGHT,
-    marginHorizontal: 0,
-    borderRadius: 0,
+    width: BANNER_CARD_WIDTH,
+    borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: Colors.backgroundCard,
+    borderWidth: 1,
+    borderColor: Colors.borderLight || '#E5E7EB',
+  },
+  bannerImageWrapper: {
+    width: BANNER_CARD_WIDTH,
+    height: BANNER_CARD_IMAGE_HEIGHT,
+    overflow: 'hidden',
   },
   bannerImage: {
     width: '100%',
     height: '100%',
   } as ImageStyle,
-  bannerOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    padding: Spacing.lg,
+  bannerIconFallback: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.backgroundLight,
   },
-  rtlBannerOverlay: {
-    alignItems: 'flex-end',
+  bannerInfo: {
+    padding: 10,
+    backgroundColor: Colors.backgroundCard,
   },
   bannerTitle: {
-    fontSize: Typography.fontSize.lg,
+    fontSize: Typography.fontSize.sm,
     fontWeight: Typography.fontWeight.bold,
-    color: Colors.textWhite,
-    marginBottom: Spacing.xs,
+    color: Colors.textPrimary,
     fontFamily: Typography.fontFamily.bold,
-  },
-  rtlBannerTitle: {
-    textAlign: 'right',
+    marginBottom: 2,
   },
   bannerDescription: {
-    fontSize: Typography.fontSize.sm,
-    color: Colors.textWhite,
-    opacity: 0.9,
+    fontSize: 11,
+    color: Colors.textSecondary,
     fontFamily: Typography.fontFamily.regular,
+    lineHeight: 15,
   },
   rtlBannerDescription: {
     textAlign: 'right',
@@ -2092,11 +2085,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   productIconFallback: {
-    backgroundColor: Colors.primaryBackground,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  bannerIconFallback: {
     backgroundColor: Colors.primaryBackground,
     justifyContent: 'center',
     alignItems: 'center',
