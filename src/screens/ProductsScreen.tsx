@@ -31,9 +31,9 @@ const ProductsScreen: React.FC<ProductsScreenProps> = ({ navigation, route }) =>
   const { t } = useTranslation();
   const { currentLanguage } = useLanguage();
   const isRTL = false; // Override to force LTR
-  const { featured, categoryId, categoryName } = route.params || {};
+  const { featured, categoryId, categoryName, sort: paramSort, order: paramOrder, sectionTitle } = route.params || {};
 
-  console.log('📱 ProductsScreen mounted with params:', { featured, categoryId, categoryName });
+  console.log('📱 ProductsScreen mounted with params:', { featured, categoryId, categoryName, paramSort, paramOrder, sectionTitle });
 
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -145,8 +145,8 @@ const ProductsScreen: React.FC<ProductsScreenProps> = ({ navigation, route }) =>
       const params: any = {
         page: pageNumber,
         limit: 10,
-        sort: 'sort_order',
-        order: 'asc'
+        sort: paramSort || 'sort_order',
+        order: paramOrder || 'asc'
       };
 
       if (featured) {
@@ -389,7 +389,9 @@ const ProductsScreen: React.FC<ProductsScreenProps> = ({ navigation, route }) =>
   };
 
   const getScreenTitle = () => {
-    if (featured) {
+    if (sectionTitle) {
+      return sectionTitle;
+    } else if (featured) {
       return t('home.featuredProducts') || 'Featured Products';
     } else if (categoryName) {
       return categoryName;

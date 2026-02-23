@@ -24,6 +24,25 @@ const normalizeDigits = (text: string): string => {
                  .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0));
 };
 
+/**
+ * Extract a 4-8 digit OTP code from an SMS body, handling both Western
+ * and Arabic-Indic numerals. Returns the first contiguous digit sequence
+ * found, or null.
+ */
+const extractOTPFromText = (text: string, expectedLength: number): string | null => {
+  const normalized = normalizeDigits(text);
+  // Match contiguous digit groups of the expected length
+  const regex = new RegExp(`\\b(\\d{${expectedLength}})\\b`);
+  const match = normalized.match(regex);
+  if (match) return match[1];
+  // Fallback: find any digit sequence of the expected length
+  const digits = normalized.replace(/[^0-9]/g, '');
+  if (digits.length >= expectedLength) {
+    return digits.slice(0, expectedLength);
+  }
+  return null;
+};
+
 interface OTPInputProps {
   length?: number;
   value: string;
@@ -68,6 +87,15 @@ const OTPInput: React.FC<OTPInputProps> = ({
   }, []);
 
   const handleChangeText = useCallback((text: string) => {
+    // When auto-fill or paste provides the full SMS body (common on some
+    // Android devices with Arabic locale), extract just the OTP digits.
+    if (text.length > length) {
+      const extracted = extractOTPFromText(text, length);
+      if (extracted) {
+        onChange(extracted);
+        return;
+      }
+    }
     // Normalize Arabic-Indic numerals and strip non-digits
     const sanitized = normalizeDigits(text).replace(/[^0-9]/g, '').slice(0, length);
     onChange(sanitized);
@@ -81,7 +109,9 @@ const OTPInput: React.FC<OTPInputProps> = ({
 
   return (
     <View style={[styles.container, containerStyle]}>
-      {/* Single hidden TextInput — receives all keyboard + auto-fill input */}
+      {/* Single hidden TextInput — receives all keyboard + auto-fill input.
+          On Android, opacity must be > 0 and dimensions must be reasonable
+          so the Autofill framework discovers this view for SMS OTP suggestion. */}
       <TextInput
         ref={hiddenInputRef}
         value={value}
@@ -97,6 +127,7 @@ const OTPInput: React.FC<OTPInputProps> = ({
         autoFocus={autoFocus}
         style={styles.hiddenInput}
         caretHidden
+        selectionColor="transparent"
       />
 
       {/* Visible digit boxes — purely presentational */}
@@ -143,9 +174,17 @@ const styles = StyleSheet.create({
   },
   hiddenInput: {
     position: 'absolute',
-    width: 1,
-    height: 1,
-    opacity: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 55,
+    // opacity: 0 causes Android Autofill to skip this view entirely.
+    // A near-zero opacity keeps it invisible while allowing the system
+    // autofill framework (SMS OTP suggestion bar) to discover it.
+    opacity: 0.01,
+    color: 'transparent',
+    backgroundColor: 'transparent',
+    zIndex: -1,
   },
   inputsContainer: {
     flexDirection: 'row',

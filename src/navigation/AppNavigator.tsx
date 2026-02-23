@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { useNotification } from '../contexts/NotificationContext';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { ActivityIndicator, View, StyleSheet, Text, I18nManager, Image, TouchableOpacity, Alert } from 'react-native';
+import { ActivityIndicator, View, StyleSheet, Text, I18nManager, Image, TouchableOpacity, Alert, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../theme/colors';
 import { Spacing } from '../theme';
@@ -655,10 +655,14 @@ const styles = StyleSheet.create({
     paddingLeft: Spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
+    ...Platform.select({
+      android: { paddingVertical: 2 },
+      ios: {},
+    }),
   },
   homeLogo: {
-    width: 90,
-    height: 35,
+    width: Platform.OS === 'android' ? 100 : 90,
+    height: Platform.OS === 'android' ? 38 : 35,
   },
   homeNotificationButton: {
     position: 'relative',
@@ -669,16 +673,17 @@ const styles = StyleSheet.create({
   },
   homeNotificationBadge: {
     position: 'absolute',
-    top: 0,
-    right: Spacing.xs,
+    top: -6,
+    right: Platform.OS === 'android' ? 2 : Spacing.xs,
     backgroundColor: Colors.error,
     borderRadius: 10,
     minWidth: 18,
     height: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: '#fff',
+    zIndex: 1,
   },
   homeNotificationBadgeText: {
     color: '#fff',

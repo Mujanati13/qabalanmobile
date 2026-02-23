@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ImageStyle,
   ViewStyle,
+  Platform,
 } from 'react-native';
 
 interface CachedImageProps extends Omit<ImageProps, 'source'> {
@@ -81,7 +82,7 @@ const CachedImage: React.FC<CachedImageProps> = memo(({
         onLoadStart={handleLoadStart}
         onLoadEnd={handleLoadEnd}
         onError={handleError}
-        progressiveRenderingEnabled={true}
+        {...(Platform.OS === 'ios' ? { progressiveRenderingEnabled: true } : { fadeDuration: 200 })}
       />
       {loading && showLoadingIndicator && (
         <View style={styles.loadingOverlay} pointerEvents="none">

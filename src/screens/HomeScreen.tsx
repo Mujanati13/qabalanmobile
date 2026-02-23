@@ -80,6 +80,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   // Auto-slide refs and state
   const bannerFlatListRef = useRef<FlatList>(null);
   const autoSlideTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const bannerIndexRef = useRef(0);
+  const bannerCountRef = useRef(0);
   const [autoSlideInterval, setAutoSlideInterval] = useState(3000); // 3 seconds default
   const [isAutoSlideEnabled, setIsAutoSlideEnabled] = useState(true);
 
@@ -182,25 +184,27 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   };
 
   // Auto-slide functionality
+  // Keep refs in sync for stable interval callbacks
+  useEffect(() => {
+    bannerCountRef.current = banners.length;
+  }, [banners.length]);
+
   const startAutoSlide = () => {
-    if (!isAutoSlideEnabled || banners.length <= 1) return;
+    if (!isAutoSlideEnabled || bannerCountRef.current <= 1) return;
     
     stopAutoSlide(); // Clear any existing timer
     
     autoSlideTimerRef.current = setInterval(() => {
-      setCurrentBannerIndex((prevIndex) => {
-        const nextIndex = (prevIndex + 1) % banners.length;
-        
-        // Scroll to next banner
-        if (bannerFlatListRef.current) {
-          bannerFlatListRef.current.scrollToIndex({
-            index: nextIndex,
-            animated: true,
-          });
-        }
-        
-        return nextIndex;
-      });
+      const nextIndex = (bannerIndexRef.current + 1) % bannerCountRef.current;
+      bannerIndexRef.current = nextIndex;
+      setCurrentBannerIndex(nextIndex);
+      
+      if (bannerFlatListRef.current) {
+        bannerFlatListRef.current.scrollToIndex({
+          index: nextIndex,
+          animated: true,
+        });
+      }
     }, autoSlideInterval);
   };
 
@@ -216,16 +220,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     startAutoSlide();
   };
 
-  // Start auto-slide when banners are loaded and component is focused
-  useEffect(() => {
-    if (banners.length > 1 && isAutoSlideEnabled) {
-      startAutoSlide();
-    }
-    
-    return () => stopAutoSlide();
-  }, [banners, autoSlideInterval, isAutoSlideEnabled]);
-
-  // Stop auto-slide when component loses focus
+  // Start/stop auto-slide based on screen focus (single source of truth)
   useFocusEffect(
     React.useCallback(() => {
       if (banners.length > 1 && isAutoSlideEnabled) {
@@ -233,7 +228,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       }
       
       return () => stopAutoSlide();
-    }, [banners, autoSlideInterval, isAutoSlideEnabled])
+    }, [banners.length, autoSlideInterval, isAutoSlideEnabled])
   );
 
   const parsePrice = (price: string | number | null | undefined): number => {
@@ -858,8 +853,15 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               keyExtractor={bannerKeyExtractor}
               horizontal
               showsHorizontalScrollIndicator={false}
-              decelerationRate="normal"
+              decelerationRate="fast"
+              snapToInterval={BANNER_SNAP_INTERVAL}
+              snapToAlignment="start"
               contentContainerStyle={styles.modernBannerList}
+              getItemLayout={(_, index) => ({
+                length: BANNER_SNAP_INTERVAL,
+                offset: BANNER_SNAP_INTERVAL * index,
+                index,
+              })}
               removeClippedSubviews={true}
               maxToRenderPerBatch={3}
               windowSize={5}
@@ -871,19 +873,14 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               }}
               onMomentumScrollEnd={(event) => {
                 const newIndex = Math.round(event.nativeEvent.contentOffset.x / BANNER_SNAP_INTERVAL);
-                setCurrentBannerIndex(Math.max(0, newIndex));
+                const clampedIndex = Math.max(0, Math.min(newIndex, banners.length - 1));
+                bannerIndexRef.current = clampedIndex;
+                setCurrentBannerIndex(clampedIndex);
                 resetAutoSlide();
               }}
               onScrollToIndexFailed={(info) => {
-                // Scroll to index failed, retry quietly
-                setTimeout(() => {
-                  if (bannerFlatListRef.current && info.index < banners.length) {
-                    bannerFlatListRef.current.scrollToIndex({
-                      index: info.index,
-                      animated: false,
-                    });
-                  }
-                }, 100);
+                const offset = info.index * BANNER_SNAP_INTERVAL;
+                bannerFlatListRef.current?.scrollToOffset({ offset, animated: false });
               }}
             />
             {banners.length > 1 && (
@@ -1012,7 +1009,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               </View>
               <TouchableOpacity 
                 style={[styles.modernViewAllButton, isRTL && styles.rtlModernViewAllButton]}
-                onPress={() => navigation.navigate('Products', { sort: 'sort_order', order: 'asc' })}
+                onPress={() => navigation.navigate('Products', { sort: 'sort_order', order: 'asc', sectionTitle: t('home.topProducts') || 'Top Products' })}
               >
                 <Text style={[styles.modernViewAllText, isRTL && styles.rtlModernViewAllText]}>
                   {t('home.viewAll') || 'View All'}
@@ -1102,7 +1099,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               </View>
               <TouchableOpacity 
                 style={[styles.modernViewAllButton, isRTL && styles.rtlModernViewAllButton]}
-                onPress={() => navigation.navigate('Products')}
+                onPress={() => navigation.navigate('Products', { sort: 'created_at', order: 'desc', sectionTitle: t('home.newArrivals') || 'New Arrivals' })}
               >
                 <Text style={[styles.modernViewAllText, isRTL && styles.rtlModernViewAllText]}>
                   {t('home.viewAll') || 'View All'}
