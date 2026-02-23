@@ -65,7 +65,7 @@ const HomeNotificationButton: React.FC<{ onPress: () => void }> = ({ onPress }) 
     <TouchableOpacity style={styles.homeNotificationButton} onPress={onPress}>
       <Icon name="notifications-outline" size={18} color={Colors.textPrimary} />
       {unreadCount > 0 && (
-        <View style={styles.homeNotificationBadge}>
+        <View style={styles.homeNotificationBadge} pointerEvents="none">
           <Text style={styles.homeNotificationBadgeText}>
             {unreadCount > 99 ? '99+' : unreadCount.toString()}
           </Text>
@@ -665,7 +665,10 @@ const styles = StyleSheet.create({
     height: Platform.OS === 'android' ? 38 : 35,
   },
   homeNotificationButton: {
-    position: 'relative',
+    // Extra padding at top so the absolute badge (top: 0) sits above the icon
+    // without using negative positioning, which Android always clips
+    paddingTop: 8,
+    paddingBottom: 2,
     paddingRight: Spacing.md,
     paddingLeft: Spacing.sm,
     justifyContent: 'center',
@@ -673,8 +676,8 @@ const styles = StyleSheet.create({
   },
   homeNotificationBadge: {
     position: 'absolute',
-    top: -6,
-    right: Platform.OS === 'android' ? 2 : Spacing.xs,
+    top: 0,
+    right: Platform.OS === 'android' ? 6 : Spacing.xs,
     backgroundColor: Colors.error,
     borderRadius: 10,
     minWidth: 18,
@@ -683,7 +686,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#fff',
-    zIndex: 1,
+    elevation: 10,
+    zIndex: 999,
   },
   homeNotificationBadgeText: {
     color: '#fff',
