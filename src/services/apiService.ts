@@ -1268,12 +1268,12 @@ class ApiService {
     return this.getProducts({ is_featured: true, limit, sort: 'created_at', order: 'desc' });
   }
 
-  async getHomeTopProducts(limit: number = 6): Promise<ProductsApiResponse> {
-    return this.getProducts({ is_home_top: true, limit, sort: 'sort_order', order: 'asc' });
+  async getHomeTopProducts(limit: number = 10): Promise<ProductsApiResponse> {
+    return this.getProducts({ limit, sort: 'sort_order', order: 'asc' });
   }
 
-  async getHomeNewProducts(limit: number = 6): Promise<ProductsApiResponse> {
-    return this.getProducts({ is_home_new: true, limit, sort: 'created_at', order: 'desc' });
+  async getHomeNewProducts(limit: number = 10): Promise<ProductsApiResponse> {
+    return this.getProducts({ limit, sort: 'created_at', order: 'desc' });
   }
 
   async getProductById(productId: number): Promise<ApiResponse<Product>> {

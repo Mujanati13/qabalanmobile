@@ -103,8 +103,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         ApiService.getBannerCategories(),
         ApiService.getTopCategories(50), // Increased from 8 to 50 to load all categories
         ApiService.getFeaturedProducts(6),
-        ApiService.getHomeTopProducts(6),
-        ApiService.getHomeNewProducts(6),
+        ApiService.getHomeTopProducts(10),
+        ApiService.getHomeNewProducts(10),
         ApiService.getFeaturedOffers(6),
       ]);
 
@@ -140,25 +140,11 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         resolvedTopProducts = homeTopRes.data;
       }
 
-      if (resolvedTopProducts.length === 0) {
-        const fallbackTopRes = await ApiService.getProducts({ limit: 6, sort: 'sort_order', order: 'asc' });
-        if (fallbackTopRes.success && fallbackTopRes.data && Array.isArray(fallbackTopRes.data)) {
-          resolvedTopProducts = fallbackTopRes.data;
-        }
-      }
-
       setTopProducts(resolvedTopProducts);
 
       let resolvedNewProducts: Product[] = [];
       if (homeNewRes.success && homeNewRes.data && Array.isArray(homeNewRes.data)) {
         resolvedNewProducts = homeNewRes.data;
-      }
-
-      if (resolvedNewProducts.length === 0) {
-        const fallbackNewRes = await ApiService.getProducts({ limit: 6, sort: 'created_at', order: 'desc' });
-        if (fallbackNewRes.success && fallbackNewRes.data && Array.isArray(fallbackNewRes.data)) {
-          resolvedNewProducts = fallbackNewRes.data;
-        }
       }
 
       setRecentProducts(resolvedNewProducts);
@@ -886,13 +872,24 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             {banners.length > 1 && (
               <View style={styles.modernBannerDots}>
                 {banners.map((_, index) => (
-                  <View
+                  <TouchableOpacity
                     key={index}
-                    style={[
-                      styles.modernDot,
-                      index === currentBannerIndex && styles.modernActiveDot
-                    ]}
-                  />
+                    onPress={() => {
+                      bannerIndexRef.current = index;
+                      setCurrentBannerIndex(index);
+                      bannerFlatListRef.current?.scrollToIndex({ index, animated: true });
+                      resetAutoSlide();
+                    }}
+                    hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.modernDot,
+                        index === currentBannerIndex && styles.modernActiveDot
+                      ]}
+                    />
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
@@ -1442,7 +1439,9 @@ const styles = StyleSheet.create({
   modernBannerDots: {
     flexDirection: 'row',
     justifyContent: 'center',
+    alignItems: 'center',
     marginTop: Spacing.lg,
+    paddingVertical: Spacing.sm,
   },
   modernDot: {
     width: 8,
