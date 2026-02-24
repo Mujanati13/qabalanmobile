@@ -858,8 +858,17 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 stopAutoSlide();
               }}
               onMomentumScrollEnd={(event) => {
-                const newIndex = Math.round(event.nativeEvent.contentOffset.x / BANNER_SNAP_INTERVAL);
-                const clampedIndex = Math.max(0, Math.min(newIndex, banners.length - 1));
+                const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+                // On Android, I18nManager.isRTL flips the scroll axis so contentOffset.x=0
+                // maps to the LAST item. Mirror the offset back to get the correct data index.
+                let rawIndex: number;
+                if (I18nManager.isRTL && Platform.OS === 'android') {
+                  const maxOffset = contentSize.width - layoutMeasurement.width;
+                  rawIndex = Math.round((maxOffset - contentOffset.x) / BANNER_SNAP_INTERVAL);
+                } else {
+                  rawIndex = Math.round(contentOffset.x / BANNER_SNAP_INTERVAL);
+                }
+                const clampedIndex = Math.max(0, Math.min(rawIndex, banners.length - 1));
                 bannerIndexRef.current = clampedIndex;
                 setCurrentBannerIndex(clampedIndex);
                 resetAutoSlide();
