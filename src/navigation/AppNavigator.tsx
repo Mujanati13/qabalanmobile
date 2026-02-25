@@ -16,6 +16,8 @@ import notificationService from '../services/notificationService';
 
 // Import screens
 import HomeScreen from '../screens/HomeScreen';
+import HomeScreenXS from '../screens/HomeScreenXS';
+import { isIPhoneXS } from '../utils/deviceDetect';
 import CategoriesScreen from '../screens/CategoriesScreen';
 import CartScreen from '../screens/CartScreen';
 import SettingsScreen from '../screens/SettingsScreen';
@@ -165,7 +167,7 @@ const HomeStack = () => {
     >
       <Stack.Screen 
         name="HomeMain" 
-        component={HomeScreen} 
+        component={isIPhoneXS ? HomeScreenXS : HomeScreen} 
         options={({ navigation }) => ({
           headerTitle: () => <HomeHeaderTitle />,
           headerLeft: () => <HomeHeaderLogo />,

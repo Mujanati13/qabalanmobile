@@ -85,6 +85,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [autoSlideInterval, setAutoSlideInterval] = useState(3000); // 3 seconds default
   const [isAutoSlideEnabled, setIsAutoSlideEnabled] = useState(true);
 
+  // Track visible banner via onViewableItemsChanged (works correctly in both LTR and RTL)
+  const bannerViewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
+  const onBannerViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
+    if (viewableItems.length > 0 && viewableItems[0].index != null) {
+      const idx = viewableItems[0].index;
+      bannerIndexRef.current = idx;
+      setCurrentBannerIndex(idx);
+    }
+  }).current;
+
   // All products infinite scroll state
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [allProductsPage, setAllProductsPage] = useState(1);
@@ -437,7 +447,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         delayPressOut={0}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
-        <View style={styles.categoryImageContainer} pointerEvents="box-none">
+        <View style={styles.categoryImageContainer}>
           {item.image && !failedImagesRef.current.has(`category-${item.id}`) ? (
             <CachedImage
               uri={ApiService.getImageUrl(item.image, 'categories')}
@@ -492,7 +502,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         delayPressOut={0}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
-        <View style={styles.productImageContainer} pointerEvents="box-none">
+        <View style={styles.productImageContainer}>
           {item.main_image && !failedImagesRef.current.has(`product-${item.id}`) ? (
             <CachedImage
               uri={ApiService.getImageUrl(item.main_image)}
@@ -806,7 +816,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 showsHorizontalScrollIndicator={false}
                 scrollEventThrottle={16}
                 contentContainerStyle={styles.modernProductsList}
-                removeClippedSubviews={true}
+                removeClippedSubviews={Platform.OS !== 'ios'}
                 nestedScrollEnabled={true}
                 maxToRenderPerBatch={4}
                 windowSize={6}
@@ -848,29 +858,18 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 offset: BANNER_SNAP_INTERVAL * index,
                 index,
               })}
-              removeClippedSubviews={true}
+              removeClippedSubviews={Platform.OS !== 'ios'}
               maxToRenderPerBatch={3}
               windowSize={5}
               extraData={currentLanguage}
               scrollEventThrottle={16}
               nestedScrollEnabled={true}
+              onViewableItemsChanged={onBannerViewableItemsChanged}
+              viewabilityConfig={bannerViewabilityConfig}
               onScrollBeginDrag={() => {
                 stopAutoSlide();
               }}
-              onMomentumScrollEnd={(event) => {
-                const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-                // On Android, I18nManager.isRTL flips the scroll axis so contentOffset.x=0
-                // maps to the LAST item. Mirror the offset back to get the correct data index.
-                let rawIndex: number;
-                if (I18nManager.isRTL && Platform.OS === 'android') {
-                  const maxOffset = contentSize.width - layoutMeasurement.width;
-                  rawIndex = Math.round((maxOffset - contentOffset.x) / BANNER_SNAP_INTERVAL);
-                } else {
-                  rawIndex = Math.round(contentOffset.x / BANNER_SNAP_INTERVAL);
-                }
-                const clampedIndex = Math.max(0, Math.min(rawIndex, banners.length - 1));
-                bannerIndexRef.current = clampedIndex;
-                setCurrentBannerIndex(clampedIndex);
+              onMomentumScrollEnd={() => {
                 resetAutoSlide();
               }}
               onScrollToIndexFailed={(info) => {
@@ -950,7 +949,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 showsHorizontalScrollIndicator={false}
                 scrollEventThrottle={16}
                 contentContainerStyle={[styles.offersList, isRTL && styles.rtlList]}
-                removeClippedSubviews={true}
+                removeClippedSubviews={Platform.OS !== 'ios'}
                 nestedScrollEnabled={true}
                 maxToRenderPerBatch={3}
                 updateCellsBatchingPeriod={50}
@@ -989,7 +988,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               keyExtractor={categoryKeyExtractor}
               horizontal
               showsHorizontalScrollIndicator={false}
-              removeClippedSubviews={true}
+              removeClippedSubviews={Platform.OS !== 'ios'}
               nestedScrollEnabled={true}
               maxToRenderPerBatch={8}
               windowSize={10}
@@ -1034,7 +1033,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               keyExtractor={productKeyExtractor}
               horizontal
               showsHorizontalScrollIndicator={false}
-              removeClippedSubviews={true}
+              removeClippedSubviews={Platform.OS !== 'ios'}
               nestedScrollEnabled={true}
               maxToRenderPerBatch={4}
               windowSize={6}
@@ -1080,7 +1079,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 scrollEventThrottle={16}
-                removeClippedSubviews={true}
+                removeClippedSubviews={Platform.OS !== 'ios'}
                 nestedScrollEnabled={true}
                 maxToRenderPerBatch={4}
                 windowSize={6}
@@ -1126,7 +1125,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               showsHorizontalScrollIndicator={false}
               scrollEventThrottle={16}
               contentContainerStyle={[styles.modernProductsList, isRTL && styles.rtlList]}
-              removeClippedSubviews={true}
+              removeClippedSubviews={Platform.OS !== 'ios'}
               nestedScrollEnabled={true}
               maxToRenderPerBatch={4}
               windowSize={6}
