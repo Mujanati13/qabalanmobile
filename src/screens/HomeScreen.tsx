@@ -413,9 +413,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         </View>
         {/* Text below image */}
         <View style={styles.bannerInfo}>
-          <Text style={styles.bannerTitle} numberOfLines={1}>{title || t('common.category')}</Text>
+          <Text style={[styles.bannerTitle, { textAlign: 'center', writingDirection: isArabic ? 'rtl' : 'ltr' }]} numberOfLines={1}>{title || t('common.category')}</Text>
           {description ? (
-            <Text style={styles.bannerDescription} numberOfLines={2}>{description}</Text>
+            <Text style={[styles.bannerDescription, { textAlign: 'center', writingDirection: isArabic ? 'rtl' : 'ltr' }]} numberOfLines={2}>{description}</Text>
           ) : null}
         </View>
       </TouchableOpacity>
